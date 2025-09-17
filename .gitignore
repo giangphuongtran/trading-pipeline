@@ -1,1 +1,8 @@
+# Ignore virtual environment directories
 .venv/
+
+# Ignore environment variable files
+.env
+
+# Ignore IDE specific files
+launch.json

@@ -1,0 +1,58 @@
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+  AIRFLOW__CORE_DAGS_ARE_PAUSED_AT_CREATION: "false"
+  AIRFLOW__CORE_DAG_CONCURRENCY: 4
+  AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 30
+  AIRFLOW__CORE_FERNET_KEY: 'please-generate-a-new-fernet-key'
+  AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+  AIRFLOW__CORE_PLUGINS_FOLDER: /opt/airflow/plugins
+
+services:
+  airflow-trading-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-trading-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-init:
+    image: apache/airflow:2.6.3
+    depends_on:
+      airflow-trading-db:
+        condition: service_healthy
+    environment:
+      <<: *airflow-env
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-trading-db:5432/airflow
+    entrypoint: >
+      /bin/bash -c "
+      airflow db upgrade &&
+      airflow users create --username admin --firstname Admin --lastname User --role Admin --email
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+
+  airflow-scheduler:
+    image: apache/airflow:2.6.3
+    depends_on:
+      airflow-trading-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-env
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-trading-db:5432/airflow
+    command: scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
