@@ -1,0 +1,1 @@
+# Polygon REST gap-heal → Kafka
