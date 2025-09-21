@@ -1,25 +1,27 @@
 x-airflow-env: &airflow-env
-  AIRFLOW__CORE__EXECUTOR: LocalExecutor
-  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-  AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-  AIRFLOW__CORE_DAGS_ARE_PAUSED_AT_CREATION: "false"
-  AIRFLOW__CORE_DAG_CONCURRENCY: 4
-  AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 30
-  AIRFLOW__CORE_FERNET_KEY: 'please-generate-a-new-fernet-key'
-  AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
-  AIRFLOW__CORE_PLUGINS_FOLDER: /opt/airflow/plugins
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor # Use LocalExecutor for simplicity of single-node setup
+  AIRFLOW__CORE__LOAD_EXAMPLES: "False" # Do not load example DAGs
+  AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "True" # Expose config in the web UI
+  AIRFLOW__CORE_DAGS_ARE_PAUSED_AT_CREATION: "False" # Do not pause DAGs at creation
+  AIRFLOW__CORE_DAG_CONCURRENCY: 4 # Limit concurrency to avoid overloading
+  AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 30 # Check for new DAGs every 30 seconds
+  AIRFLOW__CORE_FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+  AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags # Set DAGs folder
+  AIRFLOW__CORE_PLUGINS_FOLDER: /opt/airflow/plugins # Set plugins folder
 
 services:
   airflow-trading-db:
     image: postgres:14
+    ports:
+      - ["${POSTGRES_PORT}:5432"]
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - airflow-trading-db-volume:/var/lib/postgresql/data
+      - airflow-trading-db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,7 +33,9 @@ services:
         condition: service_healthy
     environment:
       <<: *airflow-env
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-trading-db:5432/airflow
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${DATABASE_URL}
+    env_file:
+      - .env
     entrypoint: >
       /bin/bash -c "
       airflow db upgrade &&
@@ -50,9 +54,33 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *airflow-env
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-trading-db:5432/airflow
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${DATABASE_URL}
+    env_file:
+      - .env
     command: scheduler
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+
+  airflow-webserver:
+    image: apache/airflow:2.6.3
+    depends_on:
+      airflow-scheduler-db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      <<: *airflow-env
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${DATABASE_URL}
+      AIRFLOW__WEBSERVER__WORKERS: 2 # Number of webserver workers
+    command: webserver
+    ports:
+      - ["${AIRFLOW_PORT}:8080"]
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+
+volumes:
+  airflow-trading-db:
