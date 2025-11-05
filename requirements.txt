@@ -1,0 +1,6 @@
+cryptography
+polygon-api-client
+psycopg2-binary
+python-dotenv
+airflow
+pytest
