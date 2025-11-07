@@ -26,8 +26,27 @@ echo "Virtual environment activated"
 
 # Install dependencies
 echo "Installing dependencies"
+pip install --upgrade pip
 pip install -r requirements.txt
 echo "Dependencies installed"
+
+# Generate Fernet key for airflow
+echo "Generating Fernet key for airflow"
+fernet_key=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+echo "Fernet key generated"
+
+# Check if AIRFLOW_FERNET_KEY already exists
+if grep -q "AIRFLOW_FERNET_KEY=" .env; then
+    # Replace existing
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
+    else
+        sed -i "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
+    fi
+else
+    # Append if doesn't exist
+    echo "AIRFLOW_FERNET_KEY=$fernet_key" >> .env
+fi
 
 # Check if docker is running, if not, start it
 if ! docker info > /dev/null 2>&1; then
@@ -55,24 +74,6 @@ while [ $attempt -lt $max_attempts ]; do
     echo "PostgreSQL not ready yet... ($attempt/$max_attempts)"
     sleep 5
 done
-
-# Generate Fernet key for airflow
-echo "Generating Fernet key for airflow"
-fernet_key=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-echo "Fernet key generated"
-
-# Check if AIRFLOW_FERNET_KEY already exists
-if grep -q "AIRFLOW_FERNET_KEY=" .env; then
-    # Replace existing
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
-    else
-        sed -i "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
-    fi
-else
-    # Append if doesn't exist
-    echo "AIRFLOW_FERNET_KEY=$fernet_key" >> .env
-fi
 
 echo "Setup complete"
 echo "Please fill in the credentials in the .env file"

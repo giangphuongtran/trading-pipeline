@@ -3,13 +3,13 @@ x-airflow-common: &airflow-common
     - AIRFLOW_FERNET_KEY=${AIRFLOW_FERNET_KEY}
     - AIRFLOW__CORE__EXECUTOR=LocalExecutor
     - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    - AIRFLOW__CORE__SQL_ALCHEMY_CONN=${AIRFLOW_DATABASE_URL}
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW_DATABASE_URL}
+    - AIRFLOW__API__AUTH_BACKENDS=${AIRFLOW_API_AUTH_BACKENDS:-airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth}
     - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
-    # - AIRFLOW__API__AUTH_BACKEND=airflow.api.auth.backend.basic_auth
     - POLYGON_API_KEY=${POLYGON_API_KEY}
     - AIRFLOW__CORE__DEFAULT_TIMEZONE=Europe/Warsaw
   volumes:
-    - ./airflow:/opt/airflow
+    - ./airflow/dags:/opt/airflow/dags
     - ./app:/opt/airflow/app
     - ./db:/opt/airflow/db
 
@@ -18,13 +18,13 @@ services:
     container_name: trading-pipeline-postgres
     image: postgres:15
     ports:
-      - "${POSTGRES_PORT_HOST}:5432"
+      - "${POSTGRES_PORT_LOCAL}:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
       - ./db:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
@@ -37,7 +37,18 @@ services:
   airflow-init:
     image: apache/airflow:2.8.0
     <<: *airflow-common
-    command: bash -c "airflow db init && airflow users create --username ${AIRFLOW_USERNAME} --password ${AIRFLOW_PASSWORD} --role Admin --email ${AIRFLOW_EMAIL}"
+    command:
+      - bash
+      - -c
+      - |
+          airflow db init &&
+          airflow users create \
+            --username "${AIRFLOW_USERNAME}" \
+            --password "${AIRFLOW_PASSWORD}" \
+            --firstname "${AIRFLOW_FIRSTNAME:-Airflow}" \
+            --lastname "${AIRFLOW_LASTNAME:-Admin}" \
+            --role Admin \
+            --email "${AIRFLOW_EMAIL}"
     depends_on:
       postgres:
         condition: service_healthy

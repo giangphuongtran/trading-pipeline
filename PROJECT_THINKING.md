@@ -17,8 +17,7 @@
 ### 4. /db folder
 - SQL scripts for database initialization:
   - `00_init.sql`: Create databases
-  - `01_create_tables.sql`: Create tables
-  - `02_create_index.sql`: Create indexes
+  - `01_create_tables.sql`: Create tables, indexes and triggers
 
 ### 5. project_setup.sh
 **Goal**: Automated setup script for new users (they get latest 6 months data; full historical data available separately)
@@ -60,6 +59,11 @@
   - Database connection handling
   - API error handling
 
+### Unit tests
+- API response handling
+- Database integration
+- Individual function tests
+
 ---
 
 ## Day 3: Airflow DAGs
@@ -71,10 +75,3 @@
 - DAG factory pattern for scalability
 
 ---
-
-## Day 4: Testing
-
-### Unit tests
-- API response handling
-- Database integration
-- Individual function tests
