@@ -75,3 +75,5 @@
 - DAG factory pattern for scalability
 
 ---
+
+## Day 4: Model

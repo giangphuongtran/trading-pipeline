@@ -23,7 +23,7 @@ def test_build_arg_parser_defaults():
     parser = cli.build_arg_parser("daily")
     args = parser.parse_args([])
     assert args.mode == "resume"
-    assert args.lookback_days == 30
+    assert args.lookback_days == 730
     assert args.tickers is None
 
 
@@ -146,4 +146,98 @@ def test_compute_backfill_plan_generates_config_per_ticker(monkeypatch):
     assert len(plans) == 2
     assert plans[0] == cli.BackfillConfig("AAPL", "2025-11-04", "2025-11-06")
     assert plans[1] == cli.BackfillConfig("MSFT", "2025-11-04", "2025-11-06")
+
+
+def test_compute_backfill_plan_resume_news_limits_to_single_chunk(monkeypatch):
+    set_fixed_today(monkeypatch)
+
+    def fake_resolve(conn, ticker, data_type, mode, explicit_start, explicit_end, lookback_days):
+        return ("2025-10-01", "2025-10-20")
+
+    monkeypatch.setattr(cli, "resolve_date_range", fake_resolve)
+
+    plans = list(
+        cli.compute_backfill_plan(
+            conn=None,
+            tickers=["AAPL"],
+            data_type="news",
+            mode="resume",
+            start_date=None,
+            end_date=None,
+            lookback_days=1,
+        )
+    )
+
+    assert plans == [cli.BackfillConfig("AAPL", "2025-10-01", "2025-10-07")]
+
+
+def test_compute_backfill_plan_full_news_still_chunks(monkeypatch):
+    set_fixed_today(monkeypatch)
+
+    def fake_resolve(conn, ticker, data_type, mode, explicit_start, explicit_end, lookback_days):
+        return ("2025-10-01", "2025-10-20")
+
+    monkeypatch.setattr(cli, "resolve_date_range", fake_resolve)
+
+    plans = list(
+        cli.compute_backfill_plan(
+            conn=None,
+            tickers=["AAPL"],
+            data_type="news",
+            mode="full",
+            start_date=None,
+            end_date=None,
+            lookback_days=1,
+        )
+    )
+
+    assert [p.start_date for p in plans] == ["2025-10-01", "2025-10-08", "2025-10-15"]
+    assert [p.end_date for p in plans] == ["2025-10-07", "2025-10-14", "2025-10-20"]
+
+
+def test_compute_backfill_plan_resume_daily_limits_to_30_days(monkeypatch):
+    set_fixed_today(monkeypatch)
+
+    def fake_resolve(conn, ticker, data_type, mode, explicit_start, explicit_end, lookback_days):
+        return ("2024-01-01", "2024-12-31")
+
+    monkeypatch.setattr(cli, "resolve_date_range", fake_resolve)
+
+    plans = list(
+        cli.compute_backfill_plan(
+            conn=None,
+            tickers=["AAPL"],
+            data_type="daily",
+            mode="resume",
+            start_date=None,
+            end_date=None,
+            lookback_days=1,
+        )
+    )
+
+    assert plans == [cli.BackfillConfig("AAPL", "2024-01-01", "2024-01-30")]
+
+
+def test_compute_backfill_plan_resume_intraday_limits_to_30_days(monkeypatch):
+    set_fixed_today(monkeypatch)
+
+    def fake_resolve(conn, ticker, data_type, mode, explicit_start, explicit_end, lookback_days):
+        return ("2025-08-01", "2025-10-15")
+
+    monkeypatch.setattr(cli, "resolve_date_range", fake_resolve)
+
+    plans = list(
+        cli.compute_backfill_plan(
+            conn=None,
+            tickers=["MSFT"],
+            data_type="intraday",
+            mode="resume",
+            start_date=None,
+            end_date=None,
+            lookback_days=1,
+        )
+    )
+
+    assert plans == [cli.BackfillConfig("MSFT", "2025-08-01", "2025-08-30")]
+
 

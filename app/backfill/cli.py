@@ -20,10 +20,17 @@ class BackfillConfig:
 
 
 def build_arg_parser(dataset: str) -> argparse.ArgumentParser:
-    """Construct an argument parser with shared backfill options."""
+    """
+    Build CLI argument parser for backfill scripts.
+    
+    Args:
+        dataset: Dataset name ("daily", "intraday", "news")
+        
+    Returns:
+        Configured ArgumentParser instance
+    """
 
     dataset_title = dataset.capitalize()
-
     parser = argparse.ArgumentParser(
         description=f"Backfill {dataset_title} data from Polygon.io",
     )
@@ -48,7 +55,7 @@ def build_arg_parser(dataset: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--lookback-days",
         type=int,
-        default=30,
+        default=730,
         help="Fallback lookback window used when metadata is absent (resume mode)",
     )
 
@@ -68,12 +75,21 @@ def build_arg_parser(dataset: str) -> argparse.ArgumentParser:
 
 
 def parse_args(dataset: str) -> argparse.Namespace:
-    """Parse CLI arguments for a given dataset."""
+    """
+    Parse command-line arguments for backfill script.
+    
+    Args:
+        dataset: Dataset name ("daily", "intraday", "news")
+        
+    Returns:
+        Parsed arguments namespace
+    """
     parser = build_arg_parser(dataset)
     return parser.parse_args()
 
 
 def _parse_date(date_str: Optional[str]) -> Optional[date]:
+    """Parse YYYY-MM-DD date string to date object."""
     if not date_str:
         return None
     return datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -89,7 +105,24 @@ def resolve_date_range(
     explicit_end: Optional[str],
     lookback_days: int,
 ) -> Tuple[str, str]:
-    """Derive the start/end window for a backfill run in ISO format."""
+    """
+    Determine date range for backfill based on mode and metadata.
+    
+    In "resume" mode: continues from last fetch date or uses lookback window.
+    In "full" mode: uses explicit start/end dates.
+    
+    Args:
+        conn: Database connection
+        ticker: Stock symbol
+        data_type: Type of data ("daily", "intraday", "news")
+        mode: "resume" or "full"
+        explicit_start: Explicit start date (YYYY-MM-DD) for "full" mode
+        explicit_end: Explicit end date (YYYY-MM-DD), defaults to yesterday
+        lookback_days: Days to look back if no metadata exists (resume mode)
+        
+    Returns:
+        Tuple of (start_date, end_date) as ISO format strings
+    """
 
     assert mode in {"resume", "full"}, "mode must be 'resume' or 'full'"
 
@@ -130,7 +163,33 @@ def compute_backfill_plan(
     end_date: Optional[str],
     lookback_days: int,
 ) -> Iterable[BackfillConfig]:
-    """Yield `BackfillConfig` instances for each ticker."""
+    """
+    Generate backfill plan with date ranges and chunking for each ticker.
+    
+    Chunks large date ranges for API efficiency (e.g., news in 7-day chunks).
+    In resume mode, limits initial chunk size to avoid long-running jobs.
+    
+    Args:
+        conn: Database connection
+        tickers: Iterable of stock symbols
+        data_type: Type of data ("daily", "intraday", "news")
+        mode: "resume" or "full"
+        start_date: Optional explicit start date
+        end_date: Optional explicit end date
+        lookback_days: Fallback lookback window
+        
+    Yields:
+        BackfillConfig instances for each ticker/date chunk
+    """
+
+    resume_chunk_days = {
+        "daily": 30,
+        "intraday": 30,
+        "news": 7,
+    }
+    api_chunk_days = {
+        "news": 7,
+    }
 
     for ticker in tickers:
         start, end = resolve_date_range(
@@ -142,5 +201,31 @@ def compute_backfill_plan(
             explicit_end=end_date,
             lookback_days=lookback_days,
         )
-        yield BackfillConfig(ticker=ticker, start_date=start, end_date=end)
+        start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+
+        resume_chunk = resume_chunk_days.get(data_type)
+        if mode == "resume" and resume_chunk is not None:
+            max_chunk_end = start_dt + timedelta(days=resume_chunk - 1)
+            if max_chunk_end < end_dt:
+                end_dt = max_chunk_end
+
+        api_chunk = api_chunk_days.get(data_type)
+        if api_chunk:
+            window = timedelta(days=api_chunk - 1)
+            current = start_dt
+            while current <= end_dt:
+                chunk_end = min(current + window, end_dt)
+                yield BackfillConfig(
+                    ticker=ticker,
+                    start_date=current.isoformat(),
+                    end_date=chunk_end.isoformat(),
+                )
+                current = chunk_end + timedelta(days=1)
+        else:
+            yield BackfillConfig(
+                ticker=ticker,
+                start_date=start_dt.isoformat(),
+                end_date=end_dt.isoformat(),
+            )
 

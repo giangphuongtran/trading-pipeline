@@ -3,22 +3,30 @@ x-airflow-common: &airflow-common
     - AIRFLOW_FERNET_KEY=${AIRFLOW_FERNET_KEY}
     - AIRFLOW__CORE__EXECUTOR=LocalExecutor
     - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW_DATABASE_URL}
-    - AIRFLOW__API__AUTH_BACKENDS=${AIRFLOW_API_AUTH_BACKENDS:-airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth}
-    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
-    - POLYGON_API_KEY=${POLYGON_API_KEY}
+    - POLYGON_API_KEY=${POLYGON_API_KEY:?POLYGON_API_KEY not set}
+    - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
+    - AIRFLOW__WEBSERVER__COOKIE_SECURE=False
+    - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=Lax
+    - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
     - AIRFLOW__CORE__DEFAULT_TIMEZONE=Europe/Warsaw
+    - AIRFLOW__LOGGING__REMOTE_LOGGING=False
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW_DATABASE_URL}
+    - DATABASE_URL_DOCKER=${DATABASE_URL_DOCKER}
+    - _PIP_ADDITIONAL_REQUIREMENTS=polygon-api-client python-dotenv
   volumes:
     - ./airflow/dags:/opt/airflow/dags
+    - airflow_logs:/opt/airflow/logs
     - ./app:/opt/airflow/app
     - ./db:/opt/airflow/db
+
 
 services:
   postgres:
     container_name: trading-pipeline-postgres
     image: postgres:15
     ports:
-      - "${POSTGRES_PORT_LOCAL}:5432"
+      - "${POSTGRES_PORT_HOST:-5441}:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -27,7 +35,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./db:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -73,3 +81,4 @@ services:
 
 volumes:
   postgres_data:
+  airflow_logs:

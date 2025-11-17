@@ -16,7 +16,19 @@ def backfill_news_articles(
     start_date: str,
     end_date: str,
 ) -> int:
-    """Fetch and persist data for a single ticker."""
+    """
+    Fetch news articles from API and insert into database.
+    
+    Args:
+        client: Polygon API client
+        conn: Database connection
+        ticker: Stock symbol
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+        
+    Returns:
+        Number of rows inserted
+    """
     print(f"Processing {ticker} from {start_date} to {end_date}")
 
     try:
@@ -30,7 +42,7 @@ def backfill_news_articles(
             update_metadata(conn, "news", ticker, start_date, end_date, rows_inserted)
             return rows_inserted
 
-        print(f"No bars found for {ticker} from {start_date} to {end_date}")
+        print(f"No news found for {ticker} from {start_date} to {end_date}")
         update_metadata(conn, "news", ticker, start_date, end_date, 0, status="completed")
         return 0
     except Exception as exc:
@@ -49,6 +61,7 @@ def backfill_news_articles(
 
 
 def main() -> None:
+    """Main entry point for news articles backfill script."""
     args = parse_args("news")
     tickers = args.tickers or NEWS_SYMBOLS
 
