@@ -101,9 +101,11 @@ class LLMSentimentModel:
         
         Args:
             model_name: HuggingFace model name (default: "ProsusAI/finbert")
+            Alternative models: "yiyanghkust/finbert-tone", "mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis"
             
         Raises:
             ImportError: If transformers library is not installed
+            OSError: If model cannot be loaded (network issue, wrong name, or auth required)
         """
         try:
             from transformers import pipeline  # type: ignore
@@ -112,8 +114,25 @@ class LLMSentimentModel:
                 "transformers is required for LLMSentimentModel. Install with `pip install transformers`."
             ) from exc
 
-        self._pipeline = pipeline("text-classification", model=model_name, return_all_scores=True)
-        self.model_name = model_name
+        # Try to load the model with better error handling
+        try:
+            self._pipeline = pipeline("text-classification", model=model_name, return_all_scores=True)
+            self.model_name = model_name
+        except OSError as exc:
+            # Provide helpful error message with alternatives
+            error_msg = (
+                f"Failed to load model '{model_name}'. "
+                f"Error: {exc}\n\n"
+                "Possible solutions:\n"
+                "1. Check your internet connection\n"
+                "2. Verify the model name is correct (e.g., 'ProsusAI/finbert')\n"
+                "3. If it's a private repo, authenticate with: `huggingface-cli login`\n"
+                "4. Try alternative models:\n"
+                "   - 'yiyanghkust/finbert-tone'\n"
+                "   - 'mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis'\n"
+                "5. Install huggingface_hub: `pip install huggingface_hub`"
+            )
+            raise OSError(error_msg) from exc
 
     def score(self, df: pd.DataFrame, text_column: str = "description") -> pd.DataFrame:
         if text_column not in df.columns:
@@ -158,33 +177,63 @@ def combine_sentiment_scores(
     llm_model: Optional[LLMSentimentModel] = None,
     rule_model: Optional[RuleBasedSentimentModel] = None,
     text_column: str = "description",
+    use_title: bool = False,
+    combine_title_description: bool = True,
 ) -> pd.DataFrame:
     """
     Combine sentiment scores from multiple sources into unified scores.
     
     Args:
-        base_df: DataFrame with text column and optional vendor sentiment
+        base_df: DataFrame with text column(s) and optional vendor sentiment
         llm_model: Optional LLM sentiment model
         rule_model: Optional rule-based sentiment model (defaults to RuleBasedSentimentModel())
-        text_column: Name of column containing text to analyze
+        text_column: Name of column containing text to analyze (default: "description")
+        use_title: If True, use "title" column instead of text_column (default: False)
+        combine_title_description: If True and both title/description exist, combine them (default: True)
+            This is often better for sentiment as titles are attention-grabbing but descriptions provide context.
+            Takes precedence over use_title and text_column.
         
     Returns:
         DataFrame with combined sentiment_score and sentiment_label columns
+        
+    Note:
+        Best practice: Use combine_title_description=True to get both the attention-grabbing
+        sentiment from titles and the contextual nuance from descriptions.
     """
     df = base_df.copy()
+
+    # Determine which text column(s) to use
+    if combine_title_description and "title" in df.columns and "description" in df.columns:
+        # Combine title and description (often best for sentiment)
+        df["_combined_text"] = (
+            df["title"].fillna("").astype(str) + ". " + df["description"].fillna("").astype(str)
+        )
+        actual_text_column = "_combined_text"
+    elif use_title and "title" in df.columns:
+        actual_text_column = "title"
+    else:
+        actual_text_column = text_column
 
     if rule_model is None:
         rule_model = RuleBasedSentimentModel()
     try:
-        rule_scores = rule_model.score(df, text_column=text_column)
+        rule_scores = rule_model.score(df, text_column=actual_text_column)
     except ValueError as exc:
         warnings.warn(str(exc))
         rule_scores = pd.DataFrame(index=df.index)
 
     if llm_model is not None:
-        llm_scores = llm_model.score(df, text_column=text_column)
+        try:
+            llm_scores = llm_model.score(df, text_column=actual_text_column)
+        except Exception as exc:
+            warnings.warn(f"LLM sentiment scoring failed: {exc}. Continuing without LLM scores.")
+            llm_scores = pd.DataFrame(index=df.index)
     else:
         llm_scores = pd.DataFrame(index=df.index)
+    
+    # Clean up temporary column if created
+    if "_combined_text" in df.columns:
+        df = df.drop(columns=["_combined_text"])
 
     for col in rule_scores.columns:
         df[col] = rule_scores[col]
@@ -207,8 +256,16 @@ def combine_sentiment_scores(
             combined > 0.1, "positive", np.where(combined < -0.1, "negative", "neutral")
         )
     else:
-        df.setdefault("sentiment_score", 0.0)
-        df.setdefault("sentiment_label", "neutral")
+        # Fix: Use fillna instead of setdefault to handle existing columns with NaN values
+        if "sentiment_score" not in df.columns:
+            df["sentiment_score"] = 0.0
+        else:
+            df["sentiment_score"] = df["sentiment_score"].fillna(0.0)
+        
+        if "sentiment_label" not in df.columns:
+            df["sentiment_label"] = "neutral"
+        else:
+            df["sentiment_label"] = df["sentiment_label"].fillna("neutral")
 
     return df
 

@@ -143,7 +143,7 @@ See `ml/notebooks/full_feature_pipeline.ipynb` for an interactive feature engine
 ### Common Commands
 
 ```bash
-# Backfill data
+# Backfill data (market indices like SPY are included automatically)
 python -m app.backfill.backfill_daily --mode resume
 python -m app.backfill.backfill_intraday --mode resume --tickers AAPL MSFT
 python -m app.backfill.backfill_news --mode full --start-date 2024-01-01

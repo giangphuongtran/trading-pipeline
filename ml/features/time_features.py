@@ -39,6 +39,9 @@ class TimeFeatureEngineer:
         """
         Create time-of-day features: hour, minute, session flags, cyclical encodings.
         
+        Converts timestamps to market timezone (ET) before extracting time components
+        to ensure hours/minutes reflect actual trading hours.
+        
         Args:
             df: DataFrame with timestamp column
             timestamp_col: Name of timestamp column (default: "timestamp")
@@ -51,6 +54,14 @@ class TimeFeatureEngineer:
 
         data = df.copy()
         data[timestamp_col] = pd.to_datetime(data[timestamp_col])
+        
+        # Convert to market timezone (ET) if timestamp is timezone-aware
+        # This ensures hours/minutes reflect actual trading hours, not UTC
+        if data[timestamp_col].dt.tz is not None:
+            data[timestamp_col] = data[timestamp_col].dt.tz_convert(self.config.session_timezone)
+        elif self.config.session_timezone:
+            # If naive datetime, assume UTC and convert to market timezone
+            data[timestamp_col] = data[timestamp_col].dt.tz_localize("UTC").dt.tz_convert(self.config.session_timezone)
 
         data = self._extract_time_components(data, timestamp_col)
         data = self._create_session_flags(data)

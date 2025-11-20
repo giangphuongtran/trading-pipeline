@@ -24,6 +24,17 @@ docker compose run --rm airflow-scheduler \
     --use-docker-db
 ```
 
+**Note:** Market indices (e.g., SPY) are automatically included in the default ticker list. To backfill only market indices, use:
+```
+docker compose run --rm airflow-scheduler \
+  python -m app.backfill.backfill_daily \
+    --mode full \
+    --tickers SPY \
+    --start-date 2023-11-08 \
+    --end-date 2023-12-07 \
+    --use-docker-db
+```
+
 ## News (automatically chunked into 7-day spans)
 ```
 docker compose run --rm airflow-scheduler \

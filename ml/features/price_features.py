@@ -74,6 +74,45 @@ class PriceFeatureEngineer:
             data[f"return_volatility_{window}d"] = (
                 grouped["daily_return"].rolling(window).std().reset_index(level=0, drop=True)
             )
+        
+        # Mean daily return (rolling mean)
+        for window in cfg.volatility_windows:  # Use same windows as volatility
+            mean_return = grouped["daily_return"].rolling(window).mean().reset_index(level=0, drop=True)
+            data[f"mean_daily_return_{window}d"] = mean_return
+        
+        # Sharpe ratio (annualized: mean_return / volatility * sqrt(252))
+        for window in cfg.volatility_windows:
+            mean_col = f"mean_daily_return_{window}d"
+            vol_col = f"return_volatility_{window}d"
+            if mean_col in data.columns and vol_col in data.columns:
+                # Annualized Sharpe: (mean_return / volatility) * sqrt(252 trading days)
+                sharpe = np.where(
+                    data[vol_col] > 1e-10,
+                    (data[mean_col] / data[vol_col]) * np.sqrt(252),
+                    np.nan
+                )
+                data[f"sharpe_ratio_{window}d"] = sharpe
+        
+        # Maximum drawdown (rolling)
+        for window in cfg.volatility_windows:
+            def _max_drawdown(group_returns: pd.Series) -> pd.Series:
+                """Calculate rolling maximum drawdown for a single ticker."""
+                # Calculate cumulative returns
+                cum_returns = (1 + group_returns).cumprod()
+                # Running maximum (peak) of cumulative returns
+                running_max = cum_returns.expanding().max()
+                # Drawdown at each point = (current - peak) / peak
+                drawdown = (cum_returns - running_max) / (running_max + 1e-10)
+                # Rolling minimum drawdown (most negative = worst drawdown in window)
+                return drawdown.rolling(window, min_periods=1).min()
+            
+            data[f"max_drawdown_{window}d"] = (
+                grouped["daily_return"].apply(_max_drawdown).reset_index(level=0, drop=True)
+            )
+        
+        # Momentum (price change over N periods)
+        for window in cfg.return_windows:
+            data[f"momentum_{window}d"] = grouped["close"].pct_change(window)
 
         # Moving averages
         for window in cfg.sma_windows:

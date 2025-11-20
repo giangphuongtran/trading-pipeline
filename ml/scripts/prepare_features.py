@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import warnings
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -25,6 +26,7 @@ from ml.features import (  # noqa: E402
     TimeFeatureEngineer,
     CandlestickFeatureEngineer,
     ConfluenceFeatureEngineer,
+    MarketFeatureEngineer,
     PriceFeatureConfig,
     VolumeFeatureConfig,
     TechnicalIndicatorConfig,
@@ -35,6 +37,7 @@ from ml.features import (  # noqa: E402
     LLMSentimentModel,
     combine_sentiment_scores,
 )
+from app.symbols import get_market_index  # noqa: E402
 
 from app.polygon_trading_client import PolygonTradingClient  # noqa: E402
 from app.config import insert_intraday_bars  # noqa: E402
@@ -55,56 +58,71 @@ def _connect_db():
         raise RuntimeError("DATABASE_URL or DATABASE_URL_HOST must be set")
     return psycopg2.connect(database_url)
 
-def _remove_non_trading_hours(df: pd.DataFrame) -> pd.DataFrame:
+def _is_holiday_gap(previous_date: pd.Timestamp, current_date: pd.Timestamp) -> bool:
     """
-    Remove weekend rows from daily bar data (keeps Monday-Friday only).
+    Check if a date gap is due to a known market holiday.
     
     Args:
-        df: DataFrame with 'date' column
+        previous_date: Previous trading date
+        current_date: Current trading date
         
     Returns:
-        DataFrame with only weekday rows
+        True if the gap is due to a known market holiday, False otherwise
     """
-    mask_weekday = df["date"].dt.dayofweek < 5
-    filtered = df[mask_weekday].copy()
-    return filtered
-
-def _restrict_to_session(df: pd.DataFrame, cfg: TimeFeatureConfig) -> pd.DataFrame:
-    """
-    Filter intraday bars to only include market trading hours (excludes pre-market/after-hours).
+    # Known market holidays that cause gaps
+    # Format: (year, month, day) for the holiday date
+    known_holidays = {
+        # 2023
+        (2023, 12, 25),  # Christmas Day
+        (2024, 1, 1),    # New Year's Day
+        # 2024
+        (2024, 1, 15),   # Martin Luther King, Jr. Day
+        (2024, 2, 19),   # Presidents' Day
+        (2024, 3, 29),   # Good Friday
+        (2024, 5, 27),   # Memorial Day
+        (2024, 9, 2),    # Labor Day
+        # 2025
+        (2025, 1, 20),   # Martin Luther King, Jr. Day
+        (2025, 2, 17),   # Presidents' Day
+        (2025, 4, 18),   # Good Friday
+        (2025, 5, 26),   # Memorial Day
+        (2025, 7, 4),    # Independence Day
+        (2025, 9, 1),    # Labor Day
+    }
     
-    Args:
-        df: DataFrame with 'timestamp' column
-        cfg: TimeFeatureConfig with market hours
-            
-    Returns:
-        DataFrame filtered to weekdays within market hours
-    """
-    if df.empty:
-        return df
-
-    minutes_open = cfg.market_open_hour * 60 + cfg.market_open_minute
-    minutes_close = cfg.market_close_hour * 60 + cfg.market_close_minute
-
-    minutes = df["timestamp"].dt.hour * 60 + df["timestamp"].dt.minute
-    mask_weekday = df["timestamp"].dt.dayofweek < 5
-    within_session = (minutes >= minutes_open) & (minutes < minutes_close)
-
-    return df[mask_weekday & within_session].copy()
+    gap_days = (current_date - previous_date).days
+    
+    # Check if gap is 4 days (typical Friday → Tuesday holiday pattern)
+    # or longer (multiple holidays or extended weekends)
+    if gap_days < 4:
+        return False
+    
+    # Check if any date in the gap (excluding weekends) matches a known holiday
+    # Iterate through dates in the gap, skipping weekends
+    check_date = previous_date + pd.Timedelta(days=1)
+    while check_date < current_date:
+        # Skip weekends (Saturday=5, Sunday=6)
+        if check_date.dayofweek < 5:  # Monday=0 to Friday=4
+            date_tuple = (check_date.year, check_date.month, check_date.day)
+            if date_tuple in known_holidays:
+                return True
+        check_date += pd.Timedelta(days=1)
+    
+    return False
 
 
 def _warn_if_date_gaps(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Detect gaps >3 days in daily bar data (may include holidays).
+    Detect gaps >3 days in daily bar data, excluding known market holidays.
     
     Args:
         df: DataFrame with 'ticker' and 'date' columns (sorted by ticker, date)
             
     Returns:
         DataFrame with gap details (ticker, row_index, previous_date, current_date, gap_days).
-        Empty if no gaps found.
+        Empty if no gaps found. Holiday gaps are excluded.
         
-    Note: Flags all gaps >3 days including holidays. Filter known holidays manually.
+    Note: Automatically filters out known market holidays (4-day gaps due to holidays).
     """
     issues: list[pd.DataFrame] = []
     grouped = df.groupby("ticker")
@@ -121,11 +139,27 @@ def _warn_if_date_gaps(df: pd.DataFrame) -> pd.DataFrame:
                     "gap_days": gap_days[mask].values,
                 }
             )
-            issues.append(details)
-            print(
-                f"⚠️  {ticker}: detected {len(details)} daily gaps (>3 days) at row(s) "
-                f"{details['row_index'].tolist()}"
+            
+            # Filter out holiday gaps
+            holiday_mask = details.apply(
+                lambda row: _is_holiday_gap(row["previous_date"], row["current_date"]),
+                axis=1
             )
+            holiday_count = holiday_mask.sum()
+            details = details[~holiday_mask].copy()
+            
+            if holiday_count > 0:
+                print(
+                    f"ℹ️  {ticker}: filtered out {holiday_count} holiday gap(s) "
+                    f"(legitimate market closures)"
+                )
+            
+            if len(details) > 0:
+                issues.append(details)
+                print(
+                    f"⚠️  {ticker}: detected {len(details)} daily gaps (>3 days) at row(s) "
+                    f"{details['row_index'].tolist()}"
+                )
     if issues:
         return pd.concat(issues, ignore_index=True)
     return pd.DataFrame(columns=["ticker", "row_index", "previous_date", "current_date", "gap_days"])
@@ -349,6 +383,30 @@ def _load_news(conn, ticker: Optional[Sequence[str] | str]) -> pd.DataFrame:
     return df
 
 
+def _load_market_index_data(conn, market_index: str) -> pd.DataFrame:
+    """
+    Load market index daily bars from database.
+    
+    Args:
+        conn: Database connection
+        market_index: Market index ticker (e.g., "I:SPX" for S&P 500)
+            
+    Returns:
+        DataFrame with date and close columns for the market index.
+        Empty if no data found.
+    """
+    query = """
+        SELECT date, close
+        FROM daily_bars
+        WHERE ticker = %s
+        ORDER BY date
+    """
+    df = pd.read_sql(query, conn, params=(market_index,))
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 def _load_intraday_bars(
     conn, ticker: Optional[Sequence[str] | str], time_cfg: TimeFeatureConfig
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -406,20 +464,24 @@ def _enrich_news_with_sentiment(
     *,
     llm_model_name: Optional[str] = None,
     use_rule_sentiment: bool = True,
+    combine_title_description: bool = True,
 ) -> pd.DataFrame:
     """
     Combine sentiment scores from vendor, rule-based, and LLM models.
     
     Args:
         news_df: DataFrame with 'description' or 'title' column
-        llm_model_name: Optional HuggingFace model (e.g., "ProsusAI/finbert")
+        llm_model_name: Optional HuggingFace model (e.g., "ProsusAI/finbert", "yiyanghkust/finbert-tone")
         use_rule_sentiment: Enable rule-based sentiment (default: True)
+        combine_title_description: If True (default), combines title + description for analysis.
+            Recommended: titles capture attention-grabbing sentiment, descriptions provide context.
             
     Returns:
         Enriched DataFrame with sentiment_rule_score, sentiment_llm_score, 
         sentiment_score (combined), and sentiment_label.
         
-    Note: Requires 'transformers' library for LLM sentiment.
+    Note: Requires 'transformers' library for LLM sentiment. If model loading fails,
+    continues without LLM scores (falls back to vendor + rule-based).
     """
     working = news_df.copy()
     if "description" not in working.columns:
@@ -430,11 +492,16 @@ def _enrich_news_with_sentiment(
     if llm_model_name:
         try:
             llm_model = LLMSentimentModel(llm_model_name)
-        except ImportError as exc:  # pragma: no cover - optional dependency
-            warnings.warn(str(exc))
+        except (ImportError, OSError) as exc:  # Handle both import and model loading errors
+            warnings.warn(f"LLM sentiment model failed to load: {exc}. Continuing without LLM sentiment.")
             llm_model = None
 
-    enriched = combine_sentiment_scores(working, llm_model=llm_model, rule_model=rule_model)
+    enriched = combine_sentiment_scores(
+        working,
+        llm_model=llm_model,
+        rule_model=rule_model,
+        combine_title_description=combine_title_description,
+    )
     return enriched
 
 
@@ -447,22 +514,28 @@ def prepare_daily_features(
     technical_config: TechnicalIndicatorConfig | None = None,
     news_config: NewsFeatureConfig | None = None,
     confluence_config: ConfluenceConfig | None = None,
-    llm_model_name: Optional[str] = None,
     use_rule_sentiment: bool = True,
+    beta_window: int = 252,
+    # LLM sentiment is optional and disabled by default
+    llm_model_name: Optional[str] = None,
+    # News sentiment features are optional and disabled by default
+    include_news_features: bool = False,
 ) -> pd.DataFrame:
     """
     Complete pipeline to prepare daily features for ML models.
     
-    Orchestrates: data loading, gap detection, price/volume/technical/news features,
-    and confluence combination. Saves to Parquet if save_path provided.
+    Orchestrates: data loading, gap detection, price/volume/technical/market features,
+    and confluence combination. News features are optional. Saves to Parquet if save_path provided.
     
     Args:
         ticker: Optional ticker filter (None = all tickers)
         save_path: Optional Parquet file path
         price_config, volume_config, technical_config, news_config, confluence_config:
             Optional configs (None = defaults)
-        llm_model_name: Optional HuggingFace model for LLM sentiment
-        use_rule_sentiment: Enable rule-based sentiment (default: True)
+        use_rule_sentiment: Enable rule-based sentiment (default: True, only used if include_news_features=True)
+        beta_window: Rolling window size for beta calculation (default: 252 trading days)
+        llm_model_name: Optional HuggingFace model for LLM sentiment (default: None, disabled)
+        include_news_features: Include news sentiment features (default: False, disabled)
             
     Returns:
         DataFrame with all engineered features. Warnings in df.attrs["warnings"].
@@ -470,7 +543,21 @@ def prepare_daily_features(
     conn = _connect_db()
     try:
         daily_df, daily_gap_warnings = _load_daily_bars(conn, ticker)
-        news_df = _load_news(conn, ticker)
+        
+        # Only load news data if news features are requested
+        news_df = _load_news(conn, ticker) if include_news_features else pd.DataFrame()
+        
+        # Determine market index to use
+        # If single ticker, use its market index; otherwise use S&P 500 as default
+        if ticker and isinstance(ticker, str):
+            market_index = get_market_index(ticker)
+        else:
+            # For multiple tickers or None, use S&P 500 (most common)
+            from app.symbols import MARKET_INDICES
+            market_index = MARKET_INDICES["US"]
+        
+        # Load market index data
+        market_df = _load_market_index_data(conn, market_index)
     finally:
         conn.close()
 
@@ -482,34 +569,52 @@ def prepare_daily_features(
     if not daily_gap_warnings.empty:
         metadata["daily_gap_warnings"] = daily_gap_warnings
 
-    price_engineer = PriceFeatureEngineer(price_config)
-    volume_engineer = VolumeFeatureEngineer(volume_config)
-    technical_engineer = TechnicalIndicatorsFeatureEngineer(technical_config)
-    news_engineer = NewsFeatureEngineer(news_config)
+    # Initialize market feature engineer if market data is available
+    market_engineer = None
+    if not market_df.empty:
+        try:
+            market_engineer = MarketFeatureEngineer(market_df, beta_window=beta_window)
+        except Exception as e:
+            warnings.warn(f"Failed to initialize market feature engineer: {e}. Continuing without market features.")
+            market_engineer = None
+    
+    # Initialize confluence engineer - it will create all features internally
     confluence_engineer = ConfluenceFeatureEngineer(
         price_config=price_config,
         volume_config=volume_config,
         technical_config=technical_config,
-        news_config=news_config,
+        news_config=news_config if include_news_features else None,
         confluence_config=confluence_config,
     )
 
-    features = price_engineer.create_features(daily_df)
-    features = volume_engineer.create_features(features)
-    features = technical_engineer.create_features(features)
-    if not news_df.empty:
+    # Prepare news data if needed
+    enriched_news = None
+    if include_news_features and not news_df.empty:
+        # Only use LLM if explicitly provided (disabled by default)
         enriched_news = _enrich_news_with_sentiment(
             news_df,
-            llm_model_name=llm_model_name,
+            llm_model_name=llm_model_name,  # None by default, no LLM processing
             use_rule_sentiment=use_rule_sentiment,
         )
-        features = news_engineer.create_features(enriched_news, features[["ticker", "date"]])
-        article_counts = enriched_news.groupby("ticker").size().rename("news_article_count")
-        features = features.merge(article_counts, on="ticker", how="left")
-    else:
-        features = news_engineer.create_features(pd.DataFrame(), features[["ticker", "date"]])
 
-    confluence = confluence_engineer.create_features(features)
+    # Confluence engineer creates all features from raw daily_df
+    # It handles price, volume, technical features internally
+    confluence = confluence_engineer.create_features(
+        daily_ohlcv=daily_df,
+        news_df=enriched_news if include_news_features else None
+    )
+    
+    # Add market features (beta, market returns, etc.) after confluence
+    # Market features need the full feature set to calculate beta
+    if market_engineer is not None:
+        confluence = market_engineer.create_features(confluence)
+    
+    # Add news article count if news features were included
+    if include_news_features and enriched_news is not None:
+        article_counts = enriched_news.groupby("ticker").size().rename("news_article_count").reset_index()
+        # Only merge if column doesn't already exist
+        if "news_article_count" not in confluence.columns:
+            confluence = confluence.merge(article_counts, on="ticker", how="left")
     confluence = confluence.dropna().reset_index(drop=True)
 
     if metadata:
@@ -524,33 +629,106 @@ def prepare_intraday_features(
     *,
     volume_config: VolumeFeatureConfig | None = None,
     time_config: TimeFeatureConfig | None = None,
+    auto_backfill: bool = True,
+    max_years_back: int = 2,
 ) -> pd.DataFrame:
     """
     Complete pipeline to prepare intraday features for ML models.
     
     Generates: candlestick patterns, time-of-day features, volume features, and
-    missing neighbor flags. Saves to Parquet if save_path provided.
+    missing neighbor flags. Automatically backfills missing bars if auto_backfill=True.
+    Saves to Parquet if save_path provided.
     
     Args:
         ticker: Optional ticker filter (None = all tickers)
         save_path: Optional Parquet file path
         volume_config: Optional volume config (None = defaults)
         time_config: Optional time config (None = defaults)
+        auto_backfill: Automatically backfill missing bars (default: True)
+        max_years_back: Maximum years back to backfill (default: 2). Older gaps are filtered out.
             
     Returns:
         DataFrame with all engineered intraday features. Warnings in df.attrs["warnings"].
-        Warnings include missing_timestamps for backfilling.
+        Old gaps (>2 years) are filtered out and not included in warnings.
     """
     time_cfg = time_config or TimeFeatureConfig()
     conn = _connect_db()
     try:
         intraday_df, intraday_gap_warnings = _load_intraday_bars(conn, ticker, time_cfg)
+        
+        # Filter out gaps older than max_years_back and auto-backfill if enabled
+        cutoff_date = (datetime.now() - timedelta(days=365 * max_years_back)).date()
+        
+        if not intraday_gap_warnings.empty:
+            # Filter out old gaps (convert timestamps to dates for comparison)
+            intraday_gap_warnings = intraday_gap_warnings.copy()
+            intraday_gap_warnings["gap_date"] = pd.to_datetime(
+                intraday_gap_warnings["previous_timestamp"]
+            ).dt.date
+            
+            old_gaps = intraday_gap_warnings[intraday_gap_warnings["gap_date"] < cutoff_date]
+            intraday_gap_warnings = intraday_gap_warnings[
+                intraday_gap_warnings["gap_date"] >= cutoff_date
+            ].copy()
+            
+            if not old_gaps.empty:
+                print(
+                    f"⏭️  Filtered out {len(old_gaps)} gap(s) older than {cutoff_date} "
+                    f"(not available in API plan, will impact analysis)"
+                )
+            
+            # Auto-backfill if enabled and gaps exist
+            if auto_backfill and not intraday_gap_warnings.empty:
+                print(f"\n🔄 Auto-backfilling missing intraday bars...")
+                from app.polygon_trading_client import PolygonTradingClient
+                
+                polygon_client = PolygonTradingClient()
+                summary = backfill_missing_intraday_timestamps(
+                    intraday_gap_warnings,
+                    conn,
+                    polygon_client,
+                    expected_interval_minutes=5,
+                    max_years_back=max_years_back,
+                )
+                
+                if summary["bars_inserted"] > 0:
+                    print(f"✅ Auto-backfilled {summary['bars_inserted']} bars")
+                    # Reload data after backfill to get updated dataset
+                    intraday_df, intraday_gap_warnings = _load_intraday_bars(conn, ticker, time_cfg)
+                    # Re-filter old gaps after reload
+                    if not intraday_gap_warnings.empty:
+                        intraday_gap_warnings["gap_date"] = pd.to_datetime(
+                            intraday_gap_warnings["previous_timestamp"]
+                        ).dt.date
+                        intraday_gap_warnings = intraday_gap_warnings[
+                            intraday_gap_warnings["gap_date"] >= cutoff_date
+                        ].copy()
     finally:
         conn.close()
 
     if intraday_df.empty:
         _persist_if_requested(pd.DataFrame(), save_path)
         return pd.DataFrame()
+
+    # Remove all data older than cutoff_date (can't be backfilled, will impact analysis)
+    if "timestamp" in intraday_df.columns:
+        intraday_df["date"] = pd.to_datetime(intraday_df["timestamp"]).dt.date
+        rows_before = len(intraday_df)
+        intraday_df = intraday_df[intraday_df["date"] >= cutoff_date].copy()
+        rows_removed_old = rows_before - len(intraday_df)
+        if rows_removed_old > 0:
+            print(
+                f"🗑️  Removed {rows_removed_old} row(s) with dates before {cutoff_date} "
+                f"(not available in API plan, will impact analysis)"
+            )
+            if "date" in intraday_df.columns:
+                intraday_df = intraday_df.drop(columns=["date"])
+        
+        # Check if dataset is empty after removal
+        if intraday_df.empty:
+            print("⚠️  Dataset is empty after removing old data")
+            _persist_if_requested(pd.DataFrame(), save_path)
+            return pd.DataFrame()
 
     metadata: dict[str, pd.DataFrame] = {}
     if not intraday_gap_warnings.empty:
@@ -562,13 +740,37 @@ def prepare_intraday_features(
 
     features = candlestick_engineer.create_features(intraday_df)
 
+    # Filter to market trading hours (9:30 AM - 4:00 PM ET) after timezone conversion
+    # This removes pre-market and after-hours data
+    features = time_engineer.create_features(features, timestamp_col="timestamp")
+    
+    # Filter to market hours using the timezone-aware timestamp
+    if "timestamp" in features.columns and time_cfg.session_timezone:
+        # Ensure timestamp is timezone-aware (should be after time_engineer conversion)
+        if features["timestamp"].dt.tz is None:
+            features["timestamp"] = pd.to_datetime(features["timestamp"]).dt.tz_localize("UTC").dt.tz_convert(time_cfg.session_timezone)
+        
+        # Convert market hours to minutes for comparison
+        market_open_minutes = time_cfg.market_open_hour * 60 + time_cfg.market_open_minute  # 9*60 + 30 = 570
+        market_close_minutes = time_cfg.market_close_hour * 60 + time_cfg.market_close_minute  # 16*60 + 0 = 960
+        
+        # Extract hour and minute from timezone-converted timestamp
+        bar_minutes = features["hour"] * 60 + features["minute"]
+        
+        # Filter to market hours only
+        market_hours_mask = (bar_minutes >= market_open_minutes) & (bar_minutes < market_close_minutes)
+        rows_before = len(features)
+        features = features[market_hours_mask].copy()
+        rows_removed = rows_before - len(features)
+        
+        if rows_removed > 0:
+            print(f"🗑️  Removed {rows_removed} row(s) outside market hours ({time_cfg.market_open_hour}:{time_cfg.market_open_minute:02d} - {time_cfg.market_close_hour}:{time_cfg.market_close_minute:02d} {time_cfg.session_timezone})")
+
     volume_input = features.copy()
     volume_input["date"] = pd.to_datetime(volume_input["timestamp"].dt.normalize())
     volume_features = volume_engineer.create_features(volume_input)
     volume_columns = [col for col in volume_features.columns if col.startswith("volume_") or col.startswith("price_volume")]
     features[volume_columns] = volume_features[volume_columns]
-
-    features = time_engineer.create_features(features, timestamp_col="timestamp")
     features, missing_neighbor_info = _flag_missing_intraday_neighbors(features)
     if not missing_neighbor_info.empty:
         print(
@@ -603,27 +805,34 @@ def backfill_missing_intraday_timestamps(
     conn,
     polygon_client: PolygonTradingClient,
     expected_interval_minutes: int = 5,
+    max_years_back: int = 2,
 ) -> dict[str, int]:
     """
     Automatically backfill missing intraday bars by fetching from Polygon API.
     
     Fetches full day's data for each date with missing bars, filters to missing timestamps,
-    and inserts using UPSERT. Safe to run multiple times.
+    and inserts using UPSERT. Safe to run multiple times. Only backfills data within
+    max_years_back (default: 2 years) due to API plan limitations.
     
     Args:
         gap_warnings: DataFrame from _warn_if_timestamp_gaps() with missing_timestamps
-        conn: Database connection
+        conn: Database connection (must be open and valid)
         polygon_client: Initialized PolygonTradingClient
         expected_interval_minutes: Expected bar interval (default: 5)
+        max_years_back: Maximum years back to backfill (default: 2). Older gaps are skipped.
     
     Returns:
-        Dict with dates_processed, bars_inserted, errors
+        Dict with dates_processed, bars_inserted, errors, skipped_old
         
-    Note: Makes API calls (rate limits apply). Check gap_warnings first.
+    Note: Makes API calls (rate limits apply). Filters out dates older than max_years_back.
     """
     if gap_warnings.empty or "missing_timestamps" not in gap_warnings.columns:
         print("No gap warnings provided or missing_timestamps column not found")
-        return {"dates_processed": 0, "bars_inserted": 0, "errors": 0}
+        return {"dates_processed": 0, "bars_inserted": 0, "errors": 0, "skipped_old": 0}
+    
+    # Calculate cutoff date (2 years ago)
+    cutoff_date = (datetime.now() - timedelta(days=365 * max_years_back)).date()
+    print(f"📅 Only backfilling data from {cutoff_date} onwards (API plan limitation)")
     
     # Extract all missing timestamps with their tickers
     missing_records = []
@@ -637,64 +846,138 @@ def backfill_missing_intraday_timestamps(
     
     if not missing_records:
         print("No missing timestamps found in gap warnings")
-        return {"dates_processed": 0, "bars_inserted": 0, "errors": 0}
+        return {"dates_processed": 0, "bars_inserted": 0, "errors": 0, "skipped_old": 0}
     
     # Convert to DataFrame and group by date and ticker
     missing_df = pd.DataFrame(missing_records)
     missing_df["timestamp"] = pd.to_datetime(missing_df["timestamp"])
     missing_df["date"] = missing_df["timestamp"].dt.date
     
-    # Get unique (ticker, date) combinations to fetch
-    ticker_dates = missing_df[["ticker", "date"]].drop_duplicates().sort_values(["ticker", "date"])
-    print(f"Found {len(ticker_dates)} ticker-date combinations with missing timestamps")
+    # Filter out dates older than cutoff
+    total_dates = len(missing_df["date"].unique())
+    missing_df = missing_df[missing_df["date"] >= cutoff_date].copy()
+    skipped_old = total_dates - len(missing_df["date"].unique())
+    
+    if skipped_old > 0:
+        print(f"⏭️  Skipping {skipped_old} date(s) older than {cutoff_date} (not available in API plan)")
+    
+    if missing_df.empty:
+        print("No missing timestamps within backfill window (last 2 years)")
+        return {"dates_processed": 0, "bars_inserted": 0, "errors": 0, "skipped_old": skipped_old}
+    
+    # Group by ticker and create date ranges for batch fetching
+    # This reduces API calls by fetching multiple days at once
+    ticker_date_groups = missing_df.groupby("ticker")["date"].apply(lambda x: sorted(set(x))).to_dict()
+    print(f"Found {len(ticker_date_groups)} ticker(s) with missing timestamps (within backfill window)")
     
     dates_processed = 0
     bars_inserted = 0
     errors = 0
     
-    for _, row in ticker_dates.iterrows():
+    for ticker, dates in ticker_date_groups.items():
         try:
-            ticker = row["ticker"]
-            date = row["date"]
-            date_str = date.strftime("%Y-%m-%d")
+            # Check if connection is still open, reconnect if needed
+            if conn.closed:
+                print("  ⚠️  Connection closed, reconnecting...")
+                conn = _connect_db()
             
-            # Fetch full day's data from API
-            print(f"Fetching {ticker} intraday data for {date_str}...")
-            bars = polygon_client.get_intraday_bars(
-                ticker=ticker,
-                start_date=date_str,
-                end_date=date_str,
-                multiplier=expected_interval_minutes,
-                timespan="minute",
-            )
-            
-            if not bars:
-                print(f"  ⚠️  No data returned from API for {date_str}")
-                errors += 1
+            # Batch dates: fetch date ranges instead of individual days
+            # Group consecutive dates into ranges to minimize API calls
+            date_ranges = []
+            if not dates:
                 continue
             
-            # Convert API timestamps to datetime for comparison
-            bars_df = pd.DataFrame(bars)
-            bars_df["timestamp"] = pd.to_datetime(bars_df["timestamp"], unit="ms", utc=True)
+            # Sort dates and group consecutive dates
+            sorted_dates = sorted(dates)
+            range_start = sorted_dates[0]
+            range_end = sorted_dates[0]
             
-            # Get missing timestamps for this ticker and date
-            date_missing = missing_df[
-                (missing_df["ticker"] == ticker) & (missing_df["date"] == date)
-            ]["timestamp"].tolist()
-            date_missing_set = set(pd.to_datetime(date_missing))
+            for i in range(1, len(sorted_dates)):
+                # If dates are consecutive (within 7 days), include in same range
+                # Otherwise, start a new range
+                days_diff = (sorted_dates[i] - range_end).days
+                if days_diff <= 7:
+                    range_end = sorted_dates[i]
+                else:
+                    date_ranges.append((range_start, range_end))
+                    range_start = sorted_dates[i]
+                    range_end = sorted_dates[i]
+            date_ranges.append((range_start, range_end))
             
-            # Filter bars to only those that are missing
-            bars_df["is_missing"] = bars_df["timestamp"].isin(date_missing_set)
-            missing_bars = bars_df[bars_df["is_missing"]].copy()
+            print(f"Fetching {ticker} intraday data for {len(date_ranges)} date range(s)...")
             
-            if missing_bars.empty:
-                print(f"  ℹ️  No missing bars found in API response for {date_str} (may have been filled)")
-                dates_processed += 1
+            # Get all missing timestamps for this ticker
+            ticker_missing = missing_df[missing_df["ticker"] == ticker]["timestamp"].tolist()
+            ticker_missing_set = set(pd.to_datetime(ticker_missing))
+            
+            # Fetch data for each date range
+            all_missing_bars = []
+            for range_start, range_end in date_ranges:
+                start_str = range_start.strftime("%Y-%m-%d")
+                end_str = range_end.strftime("%Y-%m-%d")
+                
+                try:
+                    # Fetch date range from API (much more efficient than per-day calls)
+                    if range_start == range_end:
+                        print(f"  Fetching {ticker} for {start_str}...")
+                    else:
+                        print(f"  Fetching {ticker} for {start_str} to {end_str}...")
+                    
+                    bars = polygon_client.get_intraday_bars(
+                        ticker=ticker,
+                        start_date=start_str,
+                        end_date=end_str,
+                        multiplier=expected_interval_minutes,
+                        timespan="minute",
+                    )
+                    
+                    if not bars:
+                        if range_start == range_end:
+                            print(f"    ⚠️  No data returned from API for {start_str}")
+                        else:
+                            print(f"    ⚠️  No data returned from API for {start_str} to {end_str}")
+                        errors += 1
+                        continue
+                    
+                    # Convert API timestamps to datetime for comparison
+                    bars_df = pd.DataFrame(bars)
+                    bars_df["timestamp"] = pd.to_datetime(bars_df["timestamp"], unit="ms", utc=True)
+                    
+                    # Filter bars to only those that are missing
+                    bars_df["is_missing"] = bars_df["timestamp"].isin(ticker_missing_set)
+                    range_missing_bars = bars_df[bars_df["is_missing"]].copy()
+                    
+                    if not range_missing_bars.empty:
+                        all_missing_bars.append(range_missing_bars)
+                    
+                except Exception as exc:
+                    error_msg = str(exc)
+                    # Check for API authorization errors (old data not available)
+                    if "NOT_AUTHORIZED" in error_msg or "doesn't include this data timeframe" in error_msg:
+                        if range_start == range_end:
+                            print(f"    ⏭️  Skipping {start_str}: Not available in API plan (too old)")
+                        else:
+                            print(f"    ⏭️  Skipping {start_str} to {end_str}: Not available in API plan (too old)")
+                        skipped_old += 1
+                    else:
+                        if range_start == range_end:
+                            print(f"    ❌ Error processing {start_str}: {exc}")
+                        else:
+                            print(f"    ❌ Error processing {start_str} to {end_str}: {exc}")
+                        errors += 1
+                    continue
+            
+            if not all_missing_bars:
+                print(f"  ℹ️  No missing bars found in API response for {ticker} (may have been filled)")
+                dates_processed += len(dates)
                 continue
+            
+            # Combine all missing bars from all date ranges
+            combined_missing = pd.concat(all_missing_bars, ignore_index=True)
             
             # Convert back to dict format for insert
             bars_to_insert = []
-            for _, bar in missing_bars.iterrows():
+            for _, bar in combined_missing.iterrows():
                 bars_to_insert.append({
                     "ticker": ticker,
                     "timestamp": bar["timestamp"],
@@ -707,14 +990,18 @@ def backfill_missing_intraday_timestamps(
                     "volume_weighted_avg_price": bar.get("volume_weighted_avg_price"),
                 })
             
+            # Check connection again before insert
+            if conn.closed:
+                conn = _connect_db()
+            
             # Insert into database
             inserted = insert_intraday_bars(conn, bars_to_insert)
             bars_inserted += inserted
-            dates_processed += 1
-            print(f"  ✅ Inserted {inserted} missing bars for {date_str}")
+            dates_processed += len(dates)
+            print(f"  ✅ Inserted {inserted} missing bars for {ticker} ({len(dates)} date(s))")
             
         except Exception as exc:
-            print(f"  ❌ Error processing {date_str}: {exc}")
+            print(f"  ❌ Error processing {ticker}: {exc}")
             errors += 1
             continue
     
@@ -722,9 +1009,111 @@ def backfill_missing_intraday_timestamps(
         "dates_processed": dates_processed,
         "bars_inserted": bars_inserted,
         "errors": errors,
+        "skipped_old": skipped_old,
     }
     print(f"\n📊 Backfill summary: {summary}")
     return summary
+
+
+def export_features_to_parquet(
+    data_type: str,
+    ticker: Optional[str] = None,
+    output_path: Optional[str] = None,
+    *,
+    price_config: PriceFeatureConfig | None = None,
+    volume_config: VolumeFeatureConfig | None = None,
+    technical_config: TechnicalIndicatorConfig | None = None,
+    news_config: NewsFeatureConfig | None = None,
+    confluence_config: ConfluenceConfig | None = None,
+    time_config: TimeFeatureConfig | None = None,
+    use_rule_sentiment: bool = True,
+    beta_window: int = 252,
+    auto_backfill: bool = True,
+    max_years_back: int = 2,
+    llm_model_name: Optional[str] = None,
+) -> str:
+    """
+    Export engineered features to Parquet file.
+    
+    Args:
+        data_type: Type of data to export ("daily", "intraday", or "news")
+        ticker: Optional ticker filter (None = all tickers)
+        output_path: Output file path (default: auto-generated based on data_type and ticker)
+        price_config, volume_config, technical_config, news_config, confluence_config, time_config:
+            Optional configs (None = defaults)
+        use_rule_sentiment: Enable rule-based sentiment (default: True)
+        beta_window: Rolling window size for beta calculation (default: 252 trading days)
+        auto_backfill: Automatically backfill missing intraday bars (default: True, intraday only)
+        max_years_back: Maximum years back to backfill (default: 2, intraday only)
+        llm_model_name: Optional HuggingFace model for LLM sentiment (default: None, disabled)
+        
+    Returns:
+        Path to the exported Parquet file
+        
+    Raises:
+        ValueError: If data_type is not "daily", "intraday", or "news"
+    """
+    if data_type not in ("daily", "intraday", "news"):
+        raise ValueError(f"data_type must be 'daily', 'intraday', or 'news', got '{data_type}'")
+    
+    # Generate output path if not provided
+    if output_path is None:
+        from pathlib import Path
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ticker_suffix = f"_{ticker}" if ticker else "_all"
+        output_path = f"ml/data/{data_type}_features{ticker_suffix}_{timestamp}.parquet"
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    
+    print(f"📊 Exporting {data_type} features to {output_path}...")
+    
+    if data_type == "daily":
+        df = prepare_daily_features(
+            ticker=ticker,
+            save_path=None,  # We'll save manually after
+            price_config=price_config,
+            volume_config=volume_config,
+            technical_config=technical_config,
+            news_config=news_config,
+            confluence_config=confluence_config,
+            use_rule_sentiment=use_rule_sentiment,
+            beta_window=beta_window,
+            llm_model_name=llm_model_name,  # None by default, disabled
+            include_news_features=False,  # News features disabled by default
+        )
+    elif data_type == "intraday":
+        df = prepare_intraday_features(
+            ticker=ticker,
+            save_path=None,  # We'll save manually after
+            volume_config=volume_config,
+            time_config=time_config,
+            auto_backfill=auto_backfill,
+            max_years_back=max_years_back,
+        )
+    else:  # news
+        conn = _connect_db()
+        try:
+            news_df = _load_news(conn, ticker)
+            if news_df.empty:
+                print("⚠️  No news data found")
+                df = pd.DataFrame()
+            else:
+                # Enrich with sentiment (LLM optional)
+                df = _enrich_news_with_sentiment(
+                    news_df,
+                    llm_model_name=llm_model_name,  # None by default, disabled
+                    use_rule_sentiment=use_rule_sentiment,
+                )
+        finally:
+            conn.close()
+    
+    # Save to parquet
+    if df.empty:
+        print(f"⚠️  No data to export for {data_type}")
+        return output_path
+    
+    _persist_if_requested(df, output_path)
+    print(f"✅ Exported {len(df)} rows to {output_path}")
+    return output_path
 
 
 def _parse_args() -> argparse.Namespace:
@@ -732,16 +1121,32 @@ def _parse_args() -> argparse.Namespace:
     Parse CLI arguments for feature preparation script.
     
     Returns:
-        Namespace with: model, ticker, save, llm_model, disable_rule_sentiment
+        Namespace with: model, ticker, save, llm_model, disable_rule_sentiment, export, data_type
     """
     parser = argparse.ArgumentParser(description="Prepare features for ML models")
-    parser.add_argument("--model", choices=["daily", "intraday"], required=True, help="Model type")
+    parser.add_argument("--model", choices=["daily", "intraday"], required=False, help="Model type (deprecated: use --export with --data-type)")
     parser.add_argument("--ticker", default=None, help="Specific ticker (optional)")
-    parser.add_argument("--save", default=None, help="Path to save features")
+    parser.add_argument("--save", default=None, help="Path to save features (deprecated: use --export)")
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="Export features to Parquet file",
+    )
+    parser.add_argument(
+        "--data-type",
+        choices=["daily", "intraday", "news"],
+        default=None,
+        help="Data type to export (required if --export is used)",
+    )
+    parser.add_argument(
+        "--output-path",
+        default=None,
+        help="Output Parquet file path (auto-generated if not provided)",
+    )
     parser.add_argument(
         "--llm-model",
         default=None,
-        help="Optional HuggingFace model name for sentiment scoring (e.g. ProsusAI/finbert)",
+        help="Optional HuggingFace model name for sentiment scoring (e.g. ProsusAI/finbert). Disabled by default.",
     )
     parser.add_argument(
         "--disable-rule-sentiment",
@@ -755,20 +1160,43 @@ def main() -> None:
     """
     Main entry point for CLI execution (used by Airflow DAGs and automation).
     
-    For interactive use, call prepare_daily_features() or prepare_intraday_features() directly.
+    For interactive use, call prepare_daily_features(), prepare_intraday_features(), or export_features_to_parquet() directly.
     """
     args = _parse_args()
-    if args.model == "daily":
-        df = prepare_daily_features(
-            args.ticker,
-            args.save,
-            llm_model_name=args.llm_model,
+    
+    # New export mode (preferred)
+    if args.export:
+        if not args.data_type:
+            print("❌ Error: --data-type is required when using --export")
+            print("   Example: python -m ml.scripts.prepare_features --export --data-type daily --ticker AAPL")
+            return
+        
+        output_path = export_features_to_parquet(
+            data_type=args.data_type,
+            ticker=args.ticker,
+            output_path=args.output_path,
             use_rule_sentiment=not args.disable_rule_sentiment,
+            llm_model_name=args.llm_model,  # None by default, disabled unless explicitly provided
         )
-        print(f"✅ Prepared {len(df)} rows of daily confluence features")
+        print(f"✅ Export complete: {output_path}")
+        return
+    
+    # Legacy mode (for backward compatibility with Airflow DAGs)
+    if args.model:
+        if args.model == "daily":
+            df = prepare_daily_features(
+                args.ticker,
+                args.save,
+                    llm_model_name=args.llm_model,  # None by default
+                use_rule_sentiment=not args.disable_rule_sentiment,
+            )
+            print(f"✅ Prepared {len(df)} rows of daily confluence features")
+        else:
+            df = prepare_intraday_features(args.ticker, args.save)
+            print(f"✅ Prepared {len(df)} rows of intraday features")
     else:
-        df = prepare_intraday_features(args.ticker, args.save)
-        print(f"✅ Prepared {len(df)} rows of intraday features")
+        print("❌ Error: Either --export with --data-type or --model is required")
+        print("   Example: python -m ml.scripts.prepare_features --export --data-type daily --ticker AAPL")
 
 
 if __name__ == "__main__":

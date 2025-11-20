@@ -7,7 +7,7 @@ from app.config import (
 )
 from app.backfill.cli import compute_backfill_plan, parse_args
 from app.polygon_trading_client import PolygonTradingClient
-from app.symbols import DAILY_BAR_SYMBOLS
+from app.symbols import DAILY_BAR_SYMBOLS, MARKET_INDICES
 
 def backfill_daily_bars(
     client: PolygonTradingClient,
@@ -59,7 +59,9 @@ def backfill_daily_bars(
 def main() -> None:
     """Main entry point for daily bars backfill script."""
     args = parse_args("daily")
-    tickers = args.tickers or DAILY_BAR_SYMBOLS
+    # Include market indices (e.g., SPY) by default along with regular stocks
+    default_tickers = DAILY_BAR_SYMBOLS + [MARKET_INDICES["US"]]
+    tickers = args.tickers or default_tickers
 
     client = PolygonTradingClient()
     conn = connect_db(use_docker=args.use_docker_db)

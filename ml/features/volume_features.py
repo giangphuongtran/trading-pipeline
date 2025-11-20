@@ -96,6 +96,16 @@ class VolumeFeatureEngineer:
         data["price_volume_sma_20"] = (
             grouped["price_volume"].rolling(20).mean().reset_index(level=0, drop=True)
         )
+        
+        # Liquidity: average dollar volume = average price * average daily volume
+        for window in cfg.volume_windows:
+            avg_price = grouped["close"].rolling(window).mean().reset_index(level=0, drop=True)
+            avg_volume = grouped["volume"].rolling(window).mean().reset_index(level=0, drop=True)
+            data[f"liquidity_{window}d"] = avg_price * avg_volume
+            # Also add as average of price_volume directly (equivalent)
+            data[f"avg_dollar_volume_{window}d"] = (
+                grouped["price_volume"].rolling(window).mean().reset_index(level=0, drop=True)
+            )
 
         self._summaries = [
             VolumeFeatureSummary(ticker=t, rows=len(group)) for t, group in data.groupby("ticker")

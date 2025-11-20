@@ -70,6 +70,21 @@ class NewsFeatureEngineer:
         features["news_count"] = features["sentiment_count"]
         features = self._create_rolling(features)
 
+        # Align timezones for merge: ensure both date columns have same timezone format
+        merged_tz = merged["date"].dt.tz
+        features_tz = features["date"].dt.tz
+        
+        if merged_tz is not None and features_tz is None:
+            # merged has timezone, features doesn't - convert merged to naive
+            merged["date"] = merged["date"].dt.tz_localize(None)
+        elif merged_tz is None and features_tz is not None:
+            # features has timezone, merged doesn't - convert features to naive
+            features["date"] = features["date"].dt.tz_localize(None)
+        elif merged_tz is not None and features_tz is not None:
+            # Both have timezone - convert both to UTC then remove timezone for date comparison
+            merged["date"] = merged["date"].dt.tz_convert("UTC").dt.tz_localize(None)
+            features["date"] = features["date"].dt.tz_convert("UTC").dt.tz_localize(None)
+
         merged = merged.merge(features, on=["ticker", "date"], how="left")
         merged = self._fill_missing(merged)
 

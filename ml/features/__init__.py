@@ -13,6 +13,7 @@ from .time_features import TimeFeatureEngineer
 from .news_features import NewsFeatureEngineer
 from .confluence_features import ConfluenceFeatureEngineer
 from .candlestick_features import CandlestickFeatureEngineer
+from .market_features import MarketFeatureEngineer
 from .sentiment_models import (
     RuleBasedSentimentModel,
     LLMSentimentModel,
@@ -33,6 +34,7 @@ __all__ = [
     "NewsFeatureEngineer",
     "ConfluenceFeatureEngineer",
     "CandlestickFeatureEngineer",
+    "MarketFeatureEngineer",
     "RuleBasedSentimentModel",
     "LLMSentimentModel",
     "combine_sentiment_scores",

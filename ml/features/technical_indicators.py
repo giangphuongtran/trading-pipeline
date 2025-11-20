@@ -83,8 +83,8 @@ class TechnicalIndicatorsFeatureEngineer:
             return
         column = f"rsi_{length}"
         df[column] = series
-        df["rsi"] = series  # legacy name
-        self._results.append(IndicatorResult("RSI", [column, "rsi"]))
+        # Removed legacy "rsi" column - only keep specific name
+        self._results.append(IndicatorResult("RSI", [column]))
 
     def _create_macd(self, df: pd.DataFrame) -> None:
         cfg = self.config
@@ -106,18 +106,18 @@ class TechnicalIndicatorsFeatureEngineer:
         mappings = []
         if macd_col in macd.columns:
             df[f"macd_{base}"] = macd[macd_col]
-            df["macd"] = macd[macd_col]
+            # Removed legacy "macd" column - only keep specific name
             mappings.append(f"macd_{base}")
         if sig_col in macd.columns:
             df[f"macd_signal_{base}"] = macd[sig_col]
-            df["macd_signal"] = macd[sig_col]
+            # Removed legacy "macd_signal" column - only keep specific name
             mappings.append(f"macd_signal_{base}")
         if hist_col in macd.columns:
             df[f"macd_hist_{base}"] = macd[hist_col]
-            df["macd_histogram"] = macd[hist_col]
+            # Removed legacy "macd_histogram" column - only keep specific name
             mappings.append(f"macd_hist_{base}")
         if mappings:
-            self._results.append(IndicatorResult("MACD", mappings + ["macd", "macd_signal", "macd_histogram"]))
+            self._results.append(IndicatorResult("MACD", mappings))
 
     def _create_stochastic(self, df: pd.DataFrame) -> None:
         cfg = self.config
@@ -137,13 +137,13 @@ class TechnicalIndicatorsFeatureEngineer:
         d_col = stoch.columns[1] if len(stoch.columns) > 1 else None
 
         df[f"stoch_k_{base}"] = stoch[k_col]
-        df["stoch_k"] = stoch[k_col]
-        added = [f"stoch_k_{base}", "stoch_k"]
+        # Removed legacy "stoch_k" column - only keep specific name
+        added = [f"stoch_k_{base}"]
 
         if d_col:
             df[f"stoch_d_{base}"] = stoch[d_col]
-            df["stoch_d"] = stoch[d_col]
-            added.extend([f"stoch_d_{base}", "stoch_d"])
+            # Removed legacy "stoch_d" column - only keep specific name
+            added.append(f"stoch_d_{base}")
 
         self._results.append(IndicatorResult("Stochastic", added))
 
@@ -163,23 +163,20 @@ class TechnicalIndicatorsFeatureEngineer:
         df[f"bb_lower_{base}"] = bbands[lower_col]
         df[f"bb_middle_{base}"] = bbands[middle_col]
         df[f"bb_upper_{base}"] = bbands[upper_col]
-        df[f"bb_bandwidth_{base}"] = bbands[width_col]
-
-        df["bbands_lower"] = bbands[lower_col]
-        df["bbands_middle"] = bbands[middle_col]
-        df["bbands_upper"] = bbands[upper_col]
-        df["bbands_width"] = (df["bbands_upper"] - df["bbands_lower"]) / (df["bbands_middle"])
+        # Calculate bandwidth using specific column names
+        df[f"bb_bandwidth_{base}"] = (df[f"bb_upper_{base}"] - df[f"bb_lower_{base}"]) / (df[f"bb_middle_{base}"] + 1e-10)
+        # Removed legacy "bbands_*" columns - only keep specific names
 
         if pct_col:
             df[f"bb_pct_{base}"] = bbands[pct_col]
-            df["bb_position"] = bbands[pct_col]
-            added_pct = [f"bb_pct_{base}", "bb_position"]
+            # Removed legacy "bb_position" column - only keep specific name
+            added_pct = [f"bb_pct_{base}"]
         else:
-            # Compute pct position manually
-            position = (df["close"] - df["bbands_lower"]) / (df["bbands_upper"] - df["bbands_lower"])
-            df["bb_position"] = position
+            # Compute pct position manually using specific column names
+            position = (df["close"] - df[f"bb_lower_{base}"]) / (df[f"bb_upper_{base}"] - df[f"bb_lower_{base}"] + 1e-10)
             df[f"bb_pct_{base}"] = position
-            added_pct = [f"bb_pct_{base}", "bb_position"]
+            # Removed legacy "bb_position" column - only keep specific name
+            added_pct = [f"bb_pct_{base}"]
 
         self._results.append(
             IndicatorResult(
@@ -189,10 +186,6 @@ class TechnicalIndicatorsFeatureEngineer:
                     f"bb_middle_{base}",
                     f"bb_upper_{base}",
                     f"bb_bandwidth_{base}",
-                    "bbands_lower",
-                    "bbands_middle",
-                    "bbands_upper",
-                    "bbands_width",
                 ]
                 + added_pct,
             )
@@ -232,8 +225,8 @@ class TechnicalIndicatorsFeatureEngineer:
             return
         col = f"ema_{length}"
         df[col] = ema
-        df["ema"] = ema
-        self._results.append(IndicatorResult("EMA", [col, "ema"]))
+        # Removed legacy "ema" column - only keep specific name
+        self._results.append(IndicatorResult("EMA", [col]))
 
     def _create_sma(self, df: pd.DataFrame) -> None:
         length = self.config.sma_length
@@ -242,8 +235,8 @@ class TechnicalIndicatorsFeatureEngineer:
             return
         col = f"sma_{length}"
         df[col] = sma
-        df["sma"] = sma
-        self._results.append(IndicatorResult("SMA", [col, "sma"]))
+        # Removed legacy "sma" column - only keep specific name
+        self._results.append(IndicatorResult("SMA", [col]))
 
     def _create_wma(self, df: pd.DataFrame) -> None:
         length = self.config.wma_length
@@ -252,8 +245,8 @@ class TechnicalIndicatorsFeatureEngineer:
             return
         col = f"wma_{length}"
         df[col] = wma
-        df["wma"] = wma
-        self._results.append(IndicatorResult("WMA", [col, "wma"]))
+        # Removed legacy "wma" column - only keep specific name
+        self._results.append(IndicatorResult("WMA", [col]))
 
     # Backwards compatibility helper ---------------------------------------------------
 
