@@ -16,7 +16,6 @@ from .candlestick_features import CandlestickFeatureEngineer
 from .market_features import MarketFeatureEngineer
 from .sentiment_models import (
     RuleBasedSentimentModel,
-    LLMSentimentModel,
     combine_sentiment_scores,
 )
 
@@ -36,6 +35,5 @@ __all__ = [
     "CandlestickFeatureEngineer",
     "MarketFeatureEngineer",
     "RuleBasedSentimentModel",
-    "LLMSentimentModel",
     "combine_sentiment_scores",
 ]
