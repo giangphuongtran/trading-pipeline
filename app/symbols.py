@@ -69,6 +69,72 @@ SYMBOL_TO_MARKET_INDEX = {
     "HSBC": MARKET_INDICES["US"],  # HSBC Holdings (UK ADR)
 }
 
+# Sector/segment mapping for each symbol
+SYMBOL_TO_SECTOR = {
+    # Technology
+    "AAPL": "Technology",
+    "MSFT": "Technology",
+    "GOOGL": "Technology",
+    "AMZN": "Technology",
+    "META": "Technology",
+    "NVDA": "Technology",
+    "INTC": "Technology",
+    "CSCO": "Technology",
+    "ORCL": "Technology",
+    "IBM": "Technology",
+    
+    # Financial
+    "JPM": "Financial",
+    "BAC": "Financial",
+    "WFC": "Financial",
+    "GS": "Financial",
+    "MS": "Financial",
+    "V": "Financial",
+    "MA": "Financial",
+    "AXP": "Financial",
+    
+    # Healthcare
+    "JNJ": "Healthcare",
+    "PFE": "Healthcare",
+    "MRK": "Healthcare",
+    "ABBV": "Healthcare",
+    "LLY": "Healthcare",
+    
+    # Energy
+    "XOM": "Energy",
+    "CVX": "Energy",
+    "COP": "Energy",
+    "NEE": "Energy",
+    
+    # Consumer
+    "WMT": "Consumer",
+    "COST": "Consumer",
+    "TGT": "Consumer",
+    "HD": "Consumer",
+    "PG": "Consumer",
+    "KO": "Consumer",
+    "PEP": "Consumer",
+    
+    # Industrial/Auto
+    "TSLA": "Industrial/Auto",
+    "F": "Industrial/Auto",
+    "GM": "Industrial/Auto",
+    "CAT": "Industrial/Auto",
+    "BA": "Industrial/Auto",
+    
+    # Media/Communication
+    "CMCSA": "Media/Communication",
+    "DIS": "Media/Communication",
+    "NFLX": "Media/Communication",
+    "T": "Media/Communication",
+    
+    # International
+    "BABA": "International",
+    "TM": "International",
+    "TSM": "International",
+    "HSBC": "International",
+}
+
 def get_market_index(ticker: str) -> str:
     """
     Get the market index symbol for a given ticker.
@@ -80,6 +146,18 @@ def get_market_index(ticker: str) -> str:
         Market index symbol (e.g., "I:SPX" for S&P 500)
     """
     return SYMBOL_TO_MARKET_INDEX.get(ticker, MARKET_INDICES["US"])
+
+def get_sector(ticker: str) -> str | None:
+    """
+    Get the sector/segment for a given ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        
+    Returns:
+        Sector/segment name (e.g., "Technology", "Financial") or None if not found
+    """
+    return SYMBOL_TO_SECTOR.get(ticker)
 
 # Symbols for daily bars backfill (all major symbols)
 DAILY_BAR_SYMBOLS = [

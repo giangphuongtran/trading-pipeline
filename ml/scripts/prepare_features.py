@@ -554,7 +554,7 @@ def prepare_daily_features(
     # Add market features (market index close price, market returns, etc.) after confluence
     if market_engineer is not None:
         confluence = market_engineer.create_features(confluence)
-    confluence = confluence.dropna().reset_index(drop=True)
+    confluence = confluence.reset_index(drop=True)
 
     if metadata:
         confluence.attrs["warnings"] = metadata
@@ -717,7 +717,7 @@ def prepare_intraday_features(
             f"{missing_neighbor_info['row_index'].tolist()}"
         )
         metadata["missing_intraday_neighbors"] = missing_neighbor_info
-    features = features.dropna().reset_index(drop=True)
+    features = features.reset_index(drop=True)
 
     if metadata:
         features.attrs["warnings"] = metadata
