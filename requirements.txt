@@ -27,6 +27,10 @@ setuptools>=65.0.0
 # Optional: LLM sentiment analysis (install with: pip install transformers)
 # transformers>=4.30.0
 
+# Visualization and dashboards
+streamlit>=1.28.0
+plotly>=5.17.0
+
 # Testing and code quality
 pytest>=7.4.0
 pytest-cov>=4.1.0
