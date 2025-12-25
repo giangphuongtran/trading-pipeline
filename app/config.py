@@ -18,6 +18,14 @@ load_dotenv(dotenv_path=env_path if env_path.exists() else None)
 # ---------------------------------------------------------------------------
 # Env values
 # ---------------------------------------------------------------------------
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse a bool-ish environment variable (0/1, true/false, yes/no)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
 
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
@@ -31,6 +39,10 @@ POSTGRES_PORT_DOCKER = os.getenv("POSTGRES_PORT")
 # Optional full URLs (preferred if set)
 DATABASE_URL_HOST   = os.getenv("DATABASE_URL_HOST")   # e.g. postgresql://user:pass@localhost:5440/trading_data
 DATABASE_URL_DOCKER = os.getenv("DATABASE_URL_DOCKER") # e.g. postgresql://airflow:supersecret@postgres:5432/trading_data
+
+# Pipeline feature flags
+ENABLE_DATA_QUALITY_CHECKS = _env_bool("ENABLE_DATA_QUALITY_CHECKS", default=False)
+LOG_FORMAT = os.getenv("LOG_FORMAT", "plain")
 
 
 def build_database_url(

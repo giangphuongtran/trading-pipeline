@@ -12,7 +12,7 @@
 
 ### 3. .env
 - Project credentials (database, Airflow, API keys)
-- Template: `.env.example`
+- Template: `env.example`
 
 ### 4. /db folder
 - SQL scripts for database initialization:
@@ -23,7 +23,7 @@
 **Goal**: Automated setup script for new users (they get latest 6 months data; full historical data available separately)
 
 **Tasks**:
-- Create `.env` file from `.env.example`
+- Create `.env` file from `env.example`
 - Create virtual environment (`.venv`)
 - Install Python dependencies
 - Start Docker services

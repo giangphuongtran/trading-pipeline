@@ -4,10 +4,10 @@ set -e
 
 echo "Setting up Trading Data Pipeline..."
 
-# Check if .env file exists, if not, create it from .env.example
+# Check if .env file exists, if not, create it from env.example
 if [ ! -f .env ]; then
-    echo "Creating .env file from .env.example"
-    cp .env.example .env
+    echo "Creating .env file from env.example"
+    cp env.example .env
     echo "IMPORTANT: Please fill in the credentials in the .env file"
     echo ""
 fi

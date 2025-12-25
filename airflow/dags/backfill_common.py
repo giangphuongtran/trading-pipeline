@@ -76,7 +76,7 @@ def run_backfill(module: str, extra_args: Optional[list[str]] = None, **context)
     Streams output to Airflow logs in real-time.
     
     Args:
-        module: Python module to run (e.g., "app.backfill.backfill_daily")
+        module: Python module to run (e.g., "app.backfill_daily")
         extra_args: Additional command-line arguments to pass
         **context: Airflow task context (contains dag_run with configuration)
     """
@@ -158,7 +158,7 @@ def create_backfill_operator(task_id: str, module: str) -> PythonOperator:
     
     Args:
         task_id: Airflow task identifier
-        module: Python module to run (e.g., "app.backfill.backfill_daily")
+        module: Python module to run (e.g., "app.backfill_daily")
         
     Returns:
         Configured PythonOperator instance

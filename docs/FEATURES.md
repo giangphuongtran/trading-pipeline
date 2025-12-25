@@ -1,19 +1,27 @@
-# Feature Columns Documentation
+## Feature Catalog (Daily + News)
 
-This document describes all 103 columns in the exported feature dataset, including their calculation methods, data types, and usage recommendations.
+This project produces an ML-ready feature table (daily granularity) combining:
+- OHLCV-derived price/volume features
+- technical indicators
+- market-relative features
+- news sentiment aggregates
+- confluence features (multi-signal scores)
 
-## Table of Contents
-- [Base Columns](#base-columns)
-- [Price Features](#price-features)
-- [Volume Features](#volume-features)
-- [Technical Indicators](#technical-indicators)
-- [Market Features](#market-features)
-- [News Features](#news-features)
-- [Confluence Features](#confluence-features)
+Source of truth for implementations:
+- `ml/features/*`
+- `ml/scripts/prepare_features.py`
+
+### Notes
+- Some features are duplicates by design (e.g., `momentum_5d` == `return_5d`). In modeling, you typically drop one of the redundant versions.
+- Rolling features naturally create NaNs at the start of each ticker series.
 
 ---
 
-## Base Columns
+## Feature Columns Documentation
+
+This document describes the exported feature dataset columns, including their calculation methods, data types, and usage recommendations.
+
+### Base Columns
 
 | Column Name | Data Type | Description | Calculation | Usage |
 |------------|-----------|-------------|-------------|-------|
@@ -168,45 +176,18 @@ This document describes all 103 columns in the exported feature dataset, includi
 
 ---
 
-## Summary Statistics
+## Notes (data + modeling)
 
-- **Total Columns**: 103
-- **Base Columns**: 7 (ticker, date, OHLCV)
-- **Price Features**: 33
-- **Volume Features**: 13
-- **Technical Indicators**: 17
-- **Market Features**: 4
-- **News Features**: 13 (if news data included)
-- **Confluence Features**: 16
+1. **Missing Values**
+   - Early rows may have NaN for rolling window features.
+   - News features should default to 0.0/0 if no news data is present for a day.
 
-## Notes
+2. **Feature Scaling**
+   - Consider standardizing continuous features before many ML models.
+   - Binary features (0/1) don’t need scaling.
 
-1. **Data Types**: 
-   - `float64`: Continuous numerical values
-   - `int64`: Integer values (counts, flags)
-   - `string`: Text identifiers
-   - `datetime`: Date/time values
+3. **Time-Series Considerations**
+   - Features are computed per-ticker and should be validated for leakage (no future data).
+   - Use time-based splits / walk-forward validation for supervised models.
 
-2. **Missing Values**: 
-   - Early rows may have NaN for rolling window features
-   - News features default to 0.0/0 if no news data
-   - Use `.dropna()` or forward-fill for time-series models
-
-3. **Usage Recommendations**:
-   - **Price features**: Use for trend and momentum analysis
-   - **Volume features**: Use for confirmation and liquidity analysis
-   - **Technical indicators**: Use for entry/exit signals
-   - **Market features**: Use for relative performance and risk analysis
-   - **News features**: Use for sentiment-driven strategies
-   - **Confluence features**: Use for multi-factor signal confirmation
-
-4. **Feature Scaling**: 
-   - Consider standardizing features before ML models
-   - Binary features (0/1) don't need scaling
-   - Ratio features (e.g., `close_vs_sma20`) are already normalized
-
-5. **Time-Series Considerations**:
-   - All features are calculated per-ticker (grouped)
-   - Rolling windows use historical data only (no lookahead bias)
-   - Features are suitable for time-series cross-validation
 

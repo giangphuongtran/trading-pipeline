@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import warnings
 from datetime import datetime, timedelta
@@ -11,7 +10,6 @@ from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 import pandas as pd
-import psycopg2
 
 # Add project root to PYTHONPATH so `ml.features` resolves when executed as a script
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,23 +35,7 @@ from ml.features import (  # noqa: E402
 from app.symbols import get_market_index  # noqa: E402
 
 from app.polygon_trading_client import PolygonTradingClient  # noqa: E402
-from app.config import insert_intraday_bars  # noqa: E402
-
-
-def _connect_db():
-    """
-    Connect to PostgreSQL database using DATABASE_URL or DATABASE_URL_HOST env var.
-    
-    Returns:
-        psycopg2.connection: Database connection
-        
-    Raises:
-        RuntimeError: If neither env var is set
-    """
-    database_url = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL_HOST")
-    if not database_url:
-        raise RuntimeError("DATABASE_URL or DATABASE_URL_HOST must be set")
-    return psycopg2.connect(database_url)
+from app.config import insert_intraday_bars, connect_db  # noqa: E402
 
 def _is_holiday_gap(previous_date: pd.Timestamp, current_date: pd.Timestamp) -> bool:
     """
@@ -497,7 +479,7 @@ def prepare_daily_features(
     Returns:
         DataFrame with all engineered features. Warnings in df.attrs["warnings"].
     """
-    conn = _connect_db()
+    conn = connect_db(use_docker=False)
     try:
         daily_df, daily_gap_warnings = _load_daily_bars(conn, ticker)
         
@@ -591,7 +573,7 @@ def prepare_intraday_features(
         Old gaps (>2 years) are filtered out and not included in warnings.
     """
     time_cfg = time_config or TimeFeatureConfig()
-    conn = _connect_db()
+    conn = connect_db(use_docker=False)
     try:
         intraday_df, intraday_gap_warnings = _load_intraday_bars(conn, ticker, time_cfg)
         
@@ -818,7 +800,7 @@ def backfill_missing_intraday_timestamps(
             # Check if connection is still open, reconnect if needed
             if conn.closed:
                 print("  Connection closed, reconnecting...")
-                conn = _connect_db()
+                conn = connect_db(use_docker=False)
             
             # Batch dates: fetch date ranges instead of individual days
             # Group consecutive dates into ranges to minimize API calls
@@ -931,7 +913,7 @@ def backfill_missing_intraday_timestamps(
             
             # Check connection again before insert
             if conn.closed:
-                conn = _connect_db()
+                conn = connect_db(use_docker=False)
             
             # Insert into database
             inserted = insert_intraday_bars(conn, bars_to_insert)
@@ -1022,7 +1004,7 @@ def export_features_to_parquet(
             max_years_back=max_years_back,
         )
     else:  # news
-        conn = _connect_db()
+        conn = connect_db(use_docker=False)
         try:
             news_df = _load_news(conn, ticker)
             if news_df.empty:

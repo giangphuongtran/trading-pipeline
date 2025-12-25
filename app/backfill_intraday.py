@@ -1,13 +1,20 @@
-"""Backfill Polygon intraday bars for configured tickers."""
+"""Backfill Polygon intraday bars for configured tickers.
 
-from app.config import (
-    connect_db,
-    insert_intraday_bars,
-    update_metadata,
-)
+This is the canonical implementation module used by Airflow and local runs:
+`python -m app.backfill_intraday`.
+"""
+
+from __future__ import annotations
+
 from app.backfill.cli import compute_backfill_plan, parse_args
+from app.config import connect_db, insert_intraday_bars, update_metadata
+from app.observability.logging import get_logger
 from app.polygon_trading_client import PolygonTradingClient
+from app.quality.validate import maybe_validate_intraday_bars
 from app.symbols import INTRADAY_BAR_SYMBOLS
+
+logger = get_logger(__name__)
+
 
 def backfill_intraday_bars(
     client: PolygonTradingClient,
@@ -18,31 +25,32 @@ def backfill_intraday_bars(
 ) -> int:
     """
     Fetch intraday bars from API and insert into database.
-    
+
     Args:
         client: Polygon API client
         conn: Database connection
         ticker: Stock symbol
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
-        
+
     Returns:
         Number of rows inserted
     """
-    print(f"Processing {ticker} from {start_date} to {end_date}")
+    logger.info("Processing %s from %s to %s", ticker, start_date, end_date)
 
     try:
         bars = client.get_intraday_bars(ticker, start_date, end_date)
         if bars:
+            maybe_validate_intraday_bars(bars)
             rows_inserted = insert_intraday_bars(conn, bars)
             update_metadata(conn, "intraday", ticker, start_date, end_date, rows_inserted)
             return rows_inserted
 
-        print(f"No bars found for {ticker} from {start_date} to {end_date}")
+        logger.info("No bars found for %s from %s to %s", ticker, start_date, end_date)
         update_metadata(conn, "intraday", ticker, start_date, end_date, 0, status="completed")
         return 0
     except Exception as exc:
-        print(f"Error processing {ticker} from {start_date} to {end_date}: {exc}")
+        logger.exception("Error processing %s from %s to %s", ticker, start_date, end_date)
         update_metadata(
             conn,
             "intraday",
@@ -89,3 +97,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

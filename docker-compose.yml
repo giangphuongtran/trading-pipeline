@@ -13,7 +13,9 @@ x-airflow-common: &airflow-common
     - AIRFLOW__LOGGING__REMOTE_LOGGING=False
     - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW_DATABASE_URL}
     - DATABASE_URL_DOCKER=${DATABASE_URL_DOCKER}
-    - _PIP_ADDITIONAL_REQUIREMENTS=polygon-api-client python-dotenv
+    - ENABLE_DATA_QUALITY_CHECKS=${ENABLE_DATA_QUALITY_CHECKS:-0}
+    - LOG_FORMAT=${LOG_FORMAT:-plain}
+    - _PIP_ADDITIONAL_REQUIREMENTS=polygon-api-client python-dotenv psycopg2-binary pandas pandera python-json-logger
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow_logs:/opt/airflow/logs

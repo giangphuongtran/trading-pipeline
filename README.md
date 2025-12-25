@@ -1,14 +1,25 @@
-# Trading Pipeline Project
+# Trading Pipeline
 
-A comprehensive data pipeline for collecting, processing, and engineering features from financial market data using Polygon.io API.
+Batch-first trading data pipeline that ingests market data (OHLCV + news sentiment) from Polygon.io, stores it in Postgres, and produces ML-ready features for research + modeling. Orchestrated with Airflow and runnable locally with Docker Compose.
 
-## Overview
+## What this project does
 
-This project provides:
-- **Data Collection**: Automated backfilling of daily bars, intraday bars, and news data
-- **Feature Engineering**: Comprehensive feature sets for machine learning models
-- **Data Quality**: Gap detection and data quality monitoring
-- **Orchestration**: Airflow DAGs for scheduled data updates
+- **Ingests**: daily bars, intraday (5-min) bars, and news from Polygon.io
+- **Stores**: normalized raw tables in Postgres (`daily_bars`, `intraday_bars`, `news_articles`) + ingestion metadata (`api_metadata`)
+- **Orchestrates**: Airflow DAGs schedule the batch ingestion
+- **Builds features**: feature engineering code under `ml/` for modeling workflows
+- **Includes Model 1**: unsupervised clustering + Streamlit visualization (`streamlit/clustering_app.py`)
+
+## What this pipeline has
+
+- **Orchestration**: Airflow DAGs in `airflow/dags/`
+- **Storage**: Postgres via Docker Compose (`docker-compose.yml`, `db/*.sql`)
+- **Batch ingestion**: Backfill CLIs (daily/intraday/news) + metadata tracking (`api_metadata`)
+- **Quality gates (optional)**: Pandera-based schema + invariant checks (toggle with `ENABLE_DATA_QUALITY_CHECKS=1`)
+- **Observability (baseline)**: Structured logging option (`LOG_FORMAT=json`) + failure status recorded in `api_metadata`
+- **Reproducibility**: `Makefile`, `project_setup.sh`, `env.example`
+- **Tests**: Unit tests for backfill + CLI planning (`tests/`)
+- **CI**: GitHub Actions workflow at `.github/workflows/ci.yml` (ruff + pytest)
 
 ## Quick Start
 
@@ -26,25 +37,44 @@ This project provides:
    cd trading-pipeline
    ```
 
-2. **Run setup script**
+2. **Configure environment**
+   - Copy `env.example` to `.env`
+   - Set at least `POLYGON_API_KEY=...` (required)
+   - Optional:
+     - Set `ENABLE_DATA_QUALITY_CHECKS=1` to fail fast on bad data
+     - Set `LOG_FORMAT=json` for structured logs
+
+3. **Run setup script**
    ```bash
    ./project_setup.sh
    ```
 
-3. **Configure environment**
-   - Copy `.env.example` to `.env`
-   - Fill in your credentials (database, API keys)
-
-4. **Start services**
+4. **Start services** (if not already started)
    ```bash
    docker compose up -d
    ```
 
 5. **Verify installation**
    ```bash
-   # Test database connection
-   python -c "from app.config import get_db_connection; print('✅ DB connected')"
+   # Test database connection (host context)
+   python -c "from app.config import connect_db; conn = connect_db(use_docker=False); conn.close(); print('✅ DB connected')"
    ```
+
+## One-minute demo (interview-friendly)
+
+```bash
+# 1) Start services
+make up
+
+# 2) Follow Airflow logs
+make logs
+
+# 3) (Optional) run a backfill locally (host DB URL)
+make backfill-daily
+
+# 4) Run Model 1 clustering dashboard
+streamlit run streamlit/clustering_app.py
+```
 
 ## Project Structure
 
@@ -65,9 +95,11 @@ trading-pipeline/
 │   ├── 00_init.sql       # Database initialization
 │   └── 01_create_tables.sql  # Table definitions
 ├── docs/                  # Documentation
-│   ├── BUGS_AND_FIXES.md # Bug tracking
-│   ├── DOCUMENTATION_TEMPLATE.md  # Documentation guide
-│   └── manual_backfill_commands.md  # CLI usage
+│   ├── ARCHITECTURE.md    # System design + decisions
+│   ├── RUNBOOK.md         # Ops / troubleshooting / manual backfills
+│   ├── PIPELINE_DIAGRAM.md # Mermaid diagrams
+│   ├── FEATURES.md        # Feature catalog
+│   └── ML.md              # Modeling status + how to run clustering
 ├── tests/                 # Test files
 └── docker-compose.yml     # Infrastructure setup
 ```
@@ -75,35 +107,21 @@ trading-pipeline/
 ## Documentation
 
 ### Essential Reading
-- **[Bugs and Fixes](./docs/BUGS_AND_FIXES.md)**: Complete list of bugs discovered and fixed, including data quality issues
-- **[Project Overview](./docs/PROJECT_OVERVIEW.md)**: Comprehensive project documentation (architecture, data schema, deployment, maintenance)
-- **[Documentation Template](./docs/DOCUMENTATION_TEMPLATE.md)**: Comprehensive guide for documenting data science/engineering projects
-- **[Manual Backfill Commands](./docs/manual_backfill_commands.md)**: How to manually trigger data backfills
+- **[Architecture](./docs/ARCHITECTURE.md)**: System design, data flow, and production-ready decisions
+- **[Runbook](./docs/RUNBOOK.md)**: How to run, operate, and troubleshoot the pipeline
+- **[Pipeline Diagram](./docs/PIPELINE_DIAGRAM.md)**: Detailed architecture + DAG + data model diagrams (Mermaid)
+- **[Feature Catalog](./docs/FEATURES.md)**: Feature definitions and modeling notes
+- **[ML / Modeling](./docs/ML.md)**: Current model status + how to reproduce clustering
 - **[API Examples](./misc/API_EXAMPLE.md)**: Polygon.io API usage examples
 
 ### Project Planning
-- **[Project Thinking](./PROJECT_THINKING.md)**: Original project plan and architecture decisions
+- **[Project Thinking](./PROJECT_THINKING.md)**: Early design notes (optional reading)
 
-## Key Features
+## How it works
 
-### Data Collection
-- **Daily Bars**: End-of-day OHLCV data
-- **Intraday Bars**: 5-minute aggregated bars
-- **News Data**: Market news with sentiment analysis
-
-### Feature Engineering
-- **Price Features**: Returns, volatility, moving averages
-- **Volume Features**: Volume ratios, trends, spikes
-- **Technical Indicators**: RSI, MACD, Bollinger Bands, ATR, ADX
-- **Time Features**: Session windows, cyclical encoding
-- **News Features**: Sentiment aggregation, rolling averages
-- **Candlestick Patterns**: Pattern detection for intraday data
-- **Confluence Features**: Combined signals across all feature sets
-
-### Data Quality
-- **Gap Detection**: Identifies missing daily and intraday bars
-- **Missing Timestamp Identification**: Lists exact missing timestamps for backfilling
-- **Holiday Awareness**: (Planned) Distinguish holidays from data gaps
+- Airflow runs `python -m app.backfill_daily`, `app.backfill_intraday`, `app.backfill_news` on schedule.
+- Each backfill fetches from Polygon, optionally validates via Pandera, UPSERTs to Postgres, and writes run status into `api_metadata`.
+- Feature engineering lives under `ml/` (see `docs/FEATURES.md`).
 
 ## Usage Examples
 
@@ -122,9 +140,10 @@ features = prepare_daily_features(
 ### Data Quality Check
 
 ```python
-from ml.scripts.prepare_features import _load_daily_bars, _load_intraday_bars, _connect_db
+from ml.scripts.prepare_features import _load_daily_bars, _load_intraday_bars
+from app.config import connect_db
 
-conn = _connect_db()
+conn = connect_db(use_docker=False)
 daily_bars, daily_gaps = _load_daily_bars(conn, "AAPL")
 intraday_bars, intraday_gaps = _load_intraday_bars(conn, "AAPL", time_config)
 
@@ -144,9 +163,9 @@ See `ml/notebooks/full_feature_pipeline.ipynb` for an interactive feature engine
 
 ```bash
 # Backfill data (market indices like SPY are included automatically)
-python -m app.backfill.backfill_daily --mode resume
-python -m app.backfill.backfill_intraday --mode resume --tickers AAPL MSFT
-python -m app.backfill.backfill_news --mode full --start-date 2024-01-01
+python -m app.backfill_daily --mode resume
+python -m app.backfill_intraday --mode resume --tickers AAPL MSFT
+python -m app.backfill_news --mode full --start-date 2024-01-01
 
 # Generate features
 python -m ml.scripts.prepare_features --model daily --ticker AAPL --save data/features.parquet
@@ -154,21 +173,11 @@ python -m ml.scripts.prepare_features --model intraday --ticker AAPL
 
 # Start services
 docker compose up -d
-docker compose logs -f airflow
+docker compose logs -f airflow-webserver airflow-scheduler
 
 # Run tests
 pytest tests/ -v
 ```
-
-### Market Holidays (2023-2025)
-
-These holidays cause legitimate 4-day gaps (Friday → Tuesday) in daily data:
-
-**2023**: Christmas (Dec 25), New Year (Jan 1, 2024)  
-**2024**: MLK Day (Jan 15), Presidents' Day (Feb 19), Good Friday (Mar 29), Memorial Day (May 27), Labor Day (Sep 2)  
-**2025**: MLK Day (Jan 20), Presidents' Day (Feb 17), Good Friday (Apr 18), Memorial Day (May 26), Independence Day (Jul 4), Labor Day (Sep 1)
-
-See [Bugs and Fixes](./docs/BUGS_AND_FIXES.md#market-holidays) for complete holiday list.
 
 ### Common Issues
 
@@ -192,14 +201,14 @@ See [Bugs and Fixes](./docs/BUGS_AND_FIXES.md#market-holidays) for complete holi
 ## Known Issues and Limitations
 
 ### Data Quality
-- **Holiday Gaps**: 4-day gaps (Friday to Tuesday) are often market holidays, not data issues. See [Bugs and Fixes](./docs/BUGS_AND_FIXES.md#market-holidays) for complete holiday list.
+- **Holiday Gaps**: 4-day gaps (Friday to Tuesday) are often market holidays, not data issues (see list above).
 - **Missing Data**: Gap detection identifies missing timestamps, but automatic backfill is not yet implemented.
 
 ### Technical Debt
 - Holiday calendar integration for gap detection (planned)
 - Automatic backfill mechanism for missing data (planned)
 
-See [Bugs and Fixes](./docs/BUGS_AND_FIXES.md) for complete list of known issues.
+For ops/troubleshooting, see the [Runbook](./docs/RUNBOOK.md).
 
 ## Development
 
@@ -210,9 +219,7 @@ pytest tests/
 
 ### Code Style
 ```bash
-black .
-flake8 .
-mypy .
+ruff check app tests
 ```
 
 ### Adding New Features
@@ -223,24 +230,14 @@ mypy .
 
 ## Contributing
 
-1. Read the [Documentation Template](./docs/DOCUMENTATION_TEMPLATE.md) for best practices
-2. Document all bugs in [Bugs and Fixes](./docs/BUGS_AND_FIXES.md)
-3. Update relevant documentation when making changes
-4. Add tests for new features
-5. Follow existing code patterns
-
-## License
-
-[Add your license here]
+1. Use feature branches + PRs (even if solo, it demonstrates professional workflow)
+2. Update documentation when behavior changes (`docs/ARCHITECTURE.md`, `docs/RUNBOOK.md`, `docs/ML.md`)
+3. Add/adjust tests for new behavior (`pytest`)
+4. Keep CI green (ruff + pytest)
 
 ## Support
 
 For issues and questions:
-- Check [Bugs and Fixes](./docs/BUGS_AND_FIXES.md) for known issues
-- Review [Documentation Template](./docs/DOCUMENTATION_TEMPLATE.md) for project structure
+- Start with the [Runbook](./docs/RUNBOOK.md) (common failure modes + fixes)
+- Review [Architecture](./docs/ARCHITECTURE.md) for system context
 - Open an issue on GitHub
-
----
-
-**Last Updated**: 2024-01-XX
-**Maintained By**: [Your Name/Team]

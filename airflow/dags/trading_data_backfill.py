@@ -5,17 +5,17 @@ from backfill_common import create_backfill_operator, dag_defaults
 with DAG(**dag_defaults("trading_data_backfill")) as dag:
     backfill_daily = create_backfill_operator(
         task_id="backfill_daily_bars",
-        module="app.backfill.backfill_daily",
+        module="app.backfill_daily",
     )
 
     backfill_intraday = create_backfill_operator(
         task_id="backfill_intraday_bars",
-        module="app.backfill.backfill_intraday",
+        module="app.backfill_intraday",
     )
 
     backfill_news = create_backfill_operator(
         task_id="backfill_news_articles",
-        module="app.backfill.backfill_news",
+        module="app.backfill_news",
     )
 
     backfill_daily >> backfill_intraday >> backfill_news
