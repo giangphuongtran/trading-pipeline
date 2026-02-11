@@ -18,6 +18,14 @@ from .sentiment_models import (
     RuleBasedSentimentModel,
     combine_sentiment_scores,
 )
+from .llm_sentiment import LLMSentimentConfig, add_llm_sentiment
+from .feature_registry import (
+    SENTIMENT_SCORE_MEAN,
+    SENTIMENT_SCORE_STD,
+    NEWS_COUNT,
+    SENTIMENT_ROLLING_AVG,
+    SENTIMENT_TREND,
+)
 
 __all__ = [
     "TechnicalIndicatorConfig",
@@ -36,4 +44,11 @@ __all__ = [
     "MarketFeatureEngineer",
     "RuleBasedSentimentModel",
     "combine_sentiment_scores",
+    "LLMSentimentConfig",
+    "add_llm_sentiment",
+    "SENTIMENT_SCORE_MEAN",
+    "SENTIMENT_SCORE_STD",
+    "NEWS_COUNT",
+    "SENTIMENT_ROLLING_AVG",
+    "SENTIMENT_TREND",
 ]

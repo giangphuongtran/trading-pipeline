@@ -2,6 +2,14 @@
 
 Batch-first trading data pipeline that ingests market data (OHLCV + news sentiment) from Polygon.io, stores it in Postgres, and produces ML-ready features for research + modeling. Orchestrated with Airflow and runnable locally with Docker Compose.
 
+## Pipeline Overview
+
+- Airflow schedules `app.backfill_daily`, `app.backfill_intraday`, and `app.backfill_news`.
+- Backfill jobs fetch from Polygon.io, optionally run Pandera quality checks, then UPSERT into Postgres tables.
+- Ingestion run metadata and failure status are recorded in `api_metadata` for observability and resume support.
+- Feature engineering and model prep run from `ml/` using the ingested market + news data.
+- Detailed architecture and flow diagrams: [Pipeline Diagram](./docs/pipelineOverview.png)
+
 ## What this project does
 
 - **Ingests**: daily bars, intraday (5-min) bars, and news from Polygon.io
@@ -116,12 +124,6 @@ trading-pipeline/
 
 ### Project Planning
 - **[Project Thinking](./PROJECT_THINKING.md)**: Early design notes (optional reading)
-
-## How it works
-
-- Airflow runs `python -m app.backfill_daily`, `app.backfill_intraday`, `app.backfill_news` on schedule.
-- Each backfill fetches from Polygon, optionally validates via Pandera, UPSERTs to Postgres, and writes run status into `api_metadata`.
-- Feature engineering lives under `ml/` (see `docs/FEATURES.md`).
 
 ## Usage Examples
 

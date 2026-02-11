@@ -7,7 +7,8 @@ This is the canonical implementation module used by Airflow and local runs:
 from __future__ import annotations
 
 from app.backfill.cli import compute_backfill_plan, parse_args
-from app.config import connect_db, insert_daily_bars, update_metadata
+from app.backfill.common import run_backfill
+from app.config import connect_db, insert_daily_bars
 from app.observability.logging import get_logger
 from app.polygon_trading_client import PolygonTradingClient
 from app.quality.validate import maybe_validate_daily_bars
@@ -36,32 +37,18 @@ def backfill_daily_bars(
     Returns:
         Number of rows inserted
     """
-    logger.info("Processing %s from %s to %s", ticker, start_date, end_date)
-
-    try:
-        bars = client.get_daily_bars(ticker, start_date, end_date)
-        if bars:
-            maybe_validate_daily_bars(bars)
-            rows_inserted = insert_daily_bars(conn, bars)
-            update_metadata(conn, "daily", ticker, start_date, end_date, rows_inserted)
-            return rows_inserted
-
-        logger.info("No bars found for %s from %s to %s", ticker, start_date, end_date)
-        update_metadata(conn, "daily", ticker, start_date, end_date, 0, status="completed")
-        return 0
-    except Exception as exc:
-        logger.exception("Error processing %s from %s to %s", ticker, start_date, end_date)
-        update_metadata(
-            conn,
-            "daily",
-            ticker,
-            start_date,
-            end_date,
-            0,
-            status="failed",
-            error_message=str(exc),
-        )
-        return 0
+    return run_backfill(
+        client=client,
+        conn=conn,
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        data_type="daily",
+        fetch_fn=client.get_daily_bars,
+        insert_fn=insert_daily_bars,
+        validate_fn=maybe_validate_daily_bars,
+        logger=logger,
+    )
 
 
 def main() -> None:
@@ -99,5 +86,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

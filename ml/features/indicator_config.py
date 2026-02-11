@@ -98,6 +98,12 @@ class NewsFeatureConfig:
     trend_min_periods: int = 2
     fill_numeric: float = 0.0
     fill_count: int = 0
+    enable_llm_sentiment: bool = True
+    llm_provider: str = "finbert"
+    llm_text_column: str = "description"
+    llm_use_title: bool = True
+    llm_combine_title_description: bool = True
+    llm_batch_size: int = 16
 
 
 @dataclass
@@ -140,4 +146,3 @@ class ConfluenceConfig:
             "patterns": 0.1,
         }
     )
-

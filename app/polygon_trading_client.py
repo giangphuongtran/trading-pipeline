@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import ssl
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from polygon import RESTClient
@@ -333,7 +333,7 @@ class PolygonTradingClient:
             )
             rows: List[Dict] = []
             for agg in it:
-                ts = datetime.fromtimestamp(agg.timestamp / 1000.0)
+                ts = datetime.fromtimestamp(agg.timestamp / 1000.0, tz=timezone.utc)
                 row = {
                     "ticker": ticker,
                     "timestamp": ts,

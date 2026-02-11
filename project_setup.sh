@@ -30,22 +30,23 @@ pip install --upgrade pip
 pip install -r requirements.txt
 echo "Dependencies installed"
 
-# Generate Fernet key for airflow
-echo "Generating Fernet key for airflow"
-fernet_key=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-echo "Fernet key generated"
-
-# Check if AIRFLOW_FERNET_KEY already exists
-if grep -q "AIRFLOW_FERNET_KEY=" .env; then
-    # Replace existing
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
-    else
-        sed -i "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
-    fi
+# Generate Fernet key for airflow only if not already set
+existing_key=$(grep -E "^AIRFLOW_FERNET_KEY=" .env | cut -d= -f2-)
+if [ -n "$existing_key" ]; then
+    echo "AIRFLOW_FERNET_KEY already set, skipping regeneration"
 else
-    # Append if doesn't exist
-    echo "AIRFLOW_FERNET_KEY=$fernet_key" >> .env
+    echo "Generating Fernet key for airflow"
+    fernet_key=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    echo "Fernet key generated"
+    if grep -q "AIRFLOW_FERNET_KEY=" .env; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
+        else
+            sed -i "s/AIRFLOW_FERNET_KEY=.*/AIRFLOW_FERNET_KEY=$fernet_key/" .env
+        fi
+    else
+        echo "AIRFLOW_FERNET_KEY=$fernet_key" >> .env
+    fi
 fi
 
 # Check if docker is running, if not, start it

@@ -690,7 +690,14 @@ def prepare_intraday_features(
     volume_input = features.copy()
     volume_input["date"] = pd.to_datetime(volume_input["timestamp"].dt.normalize())
     volume_features = volume_engineer.create_features(volume_input)
-    volume_columns = [col for col in volume_features.columns if col.startswith("volume_") or col.startswith("price_volume")]
+    volume_columns = [
+        col
+        for col in volume_features.columns
+        if col.startswith("volume_")
+        or col.startswith("price_volume")
+        or col.startswith("liquidity_")
+        or col.startswith("avg_dollar_volume_")
+    ]
     features[volume_columns] = volume_features[volume_columns]
     features, missing_neighbor_info = _flag_missing_intraday_neighbors(features)
     if not missing_neighbor_info.empty:
@@ -862,7 +869,10 @@ def backfill_missing_intraday_timestamps(
                     
                     # Convert API timestamps to datetime for comparison
                     bars_df = pd.DataFrame(bars)
-                    bars_df["timestamp"] = pd.to_datetime(bars_df["timestamp"], unit="ms", utc=True)
+                    if pd.api.types.is_numeric_dtype(bars_df["timestamp"]):
+                        bars_df["timestamp"] = pd.to_datetime(bars_df["timestamp"], unit="ms", utc=True)
+                    else:
+                        bars_df["timestamp"] = pd.to_datetime(bars_df["timestamp"], utc=True)
                     
                     # Filter bars to only those that are missing
                     bars_df["is_missing"] = bars_df["timestamp"].isin(ticker_missing_set)
@@ -1104,6 +1114,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
 

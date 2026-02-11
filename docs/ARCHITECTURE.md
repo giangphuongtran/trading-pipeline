@@ -12,6 +12,7 @@ Batch-first trading data pipeline that ingests market data (OHLCV + news sentime
 - **Storage**: Postgres (Docker Compose) initialized by `db/00_init.sql` and `db/01_create_tables.sql`
 - **ML Feature Engineering**: `ml/scripts/prepare_features.py` and `ml/features/*`
 - **UI (optional)**: Streamlit clustering app in `streamlit/`
+- **LLM layer (optional)**: LLM sentiment scoring for news via `ml/features/llm_sentiment.py` (toggle in `NewsFeatureConfig`)
 
 ### Data flow (batch)
 1. Airflow triggers a backfill task (daily / intraday / news).
@@ -46,5 +47,4 @@ See `docs/PIPELINE_DIAGRAM.md` for an ER diagram and end-to-end flow charts.
 - Add “bronze/silver/gold” layers (raw snapshots → cleaned tables → feature/prediction tables).
 - Add alerting (Airflow callbacks / Slack/email) + freshness SLAs.
 - Add model versioning + prediction persistence (MLflow or lightweight registry).
-
 

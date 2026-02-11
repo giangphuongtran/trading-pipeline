@@ -41,6 +41,12 @@ try:
 except Exception:
     HAS_KMEDOIDS = False
 
+import os
+import sys
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from app.config import connect_db
 
 warnings.filterwarnings("ignore")
@@ -52,6 +58,41 @@ DEFAULT_DATA_PATHS = [
 ]
 
 RANDOM_STATE = 42
+
+FEATURE_GROUPS: dict[str, list[str]] = {
+    "Risk/Return": [
+        "mean_daily_return",
+        "mean_stock_vs_market",
+        "beta_global",
+        "mean_sharpe_20d",
+        "worst_drawdown",
+    ],
+    "Momentum": [
+        "mean_momentum_20d",
+        "mean_close_vs_sma200",
+        "mean_adx_14",
+        "mean_price_pos_20d",
+    ],
+    "Volatility": [
+        "mean_volatility_20d",
+        "mean_atr_14",
+        "mean_volatility_ratio",
+        "mean_bb_width",
+    ],
+    "Liquidity": [
+        "mean_liquidity_20d",
+        "mean_volume_ratio",
+    ],
+    "Technical": [
+        "mean_rsi_14",
+        "mean_macd_hist",
+        "mean_stoch_k",
+    ],
+    "Distribution": [
+        "return_skewness",
+        "return_kurtosis",
+    ],
+}
 
 
 @st.cache_data
@@ -117,11 +158,12 @@ def prepare_features_for_clustering(global_df: pd.DataFrame) -> tuple[pd.DataFra
     features = global_df[feature_cols].copy()
     tickers = global_df["ticker"].astype(str).tolist()
 
-    # Fill missing values
+    # Ensure numeric-only and handle invalid values
     features = features.replace([np.inf, -np.inf], np.nan)
+    features = features.apply(pd.to_numeric, errors="coerce")
     features = features.fillna(features.median(numeric_only=True))
 
-    # Transform skewed features
+    # Transform skewed features (Yeo-Johnson)
     skew = features.skew(numeric_only=True)
     skewed_cols = skew[skew.abs() > 2.0].index.tolist()
     features_transformed = features.copy()
@@ -129,7 +171,7 @@ def prepare_features_for_clustering(global_df: pd.DataFrame) -> tuple[pd.DataFra
         pt = PowerTransformer(method="yeo-johnson", standardize=False)
         features_transformed[col] = pt.fit_transform(features[[col]]).flatten()
 
-    # Standardize
+    # Standardize with sklearn StandardScaler (population std, ddof=0)
     scaler = StandardScaler()
     features_scaled = pd.DataFrame(
         scaler.fit_transform(features_transformed),
@@ -145,7 +187,7 @@ def run_clustering(
     method: str,
     n_clusters: int,
     features_scaled: pd.DataFrame,
-    pca_variance: float,
+    pca_components: int,
 ) -> tuple[pd.DataFrame, dict, object | None, np.ndarray | None, pd.DataFrame]:
     """
     Run clustering with PCA reduction.
@@ -156,7 +198,7 @@ def run_clustering(
     """
     tickers = features_scaled.index.tolist()
 
-    pca = PCA(n_components=float(pca_variance), random_state=RANDOM_STATE)
+    pca = PCA(n_components=int(pca_components), random_state=RANDOM_STATE)
     features_pca = pd.DataFrame(
         pca.fit_transform(features_scaled),
         index=features_scaled.index,
@@ -338,7 +380,7 @@ def _plot_dendrogram(linkage_matrix: np.ndarray, labels: list[str]) -> go.Figure
     return fig
 
 
-def _silhouette_barplot(df: pd.DataFrame, avg: float) -> go.Figure:
+def _silhouette_barplot(df: pd.DataFrame, avg: float, *, show_labels: bool) -> go.Figure:
     sdf = df.sort_values(["cluster", "silhouette_width"], ascending=[True, False]).reset_index(drop=True)
     sdf["y"] = np.arange(len(sdf))
 
@@ -352,6 +394,7 @@ def _silhouette_barplot(df: pd.DataFrame, avg: float) -> go.Figure:
                 orientation="h",
                 name=f"Cluster {cluster}",
                 text=seg["ticker"],
+                textposition="outside" if show_labels else "none",
                 hovertemplate="<b>%{text}</b><br>Silhouette: %{x:.3f}<extra></extra>",
             )
         )
@@ -367,8 +410,69 @@ def _silhouette_barplot(df: pd.DataFrame, avg: float) -> go.Figure:
         title="Silhouette Analysis",
         template="plotly_white",
         height=max(420, len(sdf) * 14),
-        yaxis=dict(showticklabels=False),
+        yaxis=dict(showticklabels=show_labels),
         xaxis_title="Silhouette width",
+    )
+    if show_labels:
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=sdf["y"],
+            ticktext=sdf["ticker"],
+        )
+    return fig
+
+
+def _compute_cluster_profiles(
+    global_df: pd.DataFrame, clusters_df: pd.DataFrame, feature_cols: list[str]
+) -> pd.DataFrame:
+    base = global_df.set_index("ticker")
+    joined = clusters_df.set_index("ticker").join(base, how="left")
+    numeric_cols = [c for c in feature_cols if c in joined.columns]
+    if not numeric_cols:
+        return pd.DataFrame()
+    cluster_means = joined.groupby("cluster")[numeric_cols].mean(numeric_only=True)
+    cluster_means = cluster_means.replace([np.inf, -np.inf], np.nan).fillna(0)
+    # z-score across clusters for comparability
+    cluster_means_z = cluster_means.apply(
+        lambda s: (s - s.mean()) / (s.std(ddof=0) if s.std(ddof=0) != 0 else 1.0),
+        axis=0,
+    )
+    return cluster_means_z
+
+
+def _radar_chart_for_cluster(
+    cluster_means_z: pd.DataFrame, cluster_id: int, color: str
+) -> go.Figure:
+    labels = []
+    values = []
+    for group_name, feats in FEATURE_GROUPS.items():
+        available = [f for f in feats if f in cluster_means_z.columns]
+        if not available:
+            continue
+        labels.append(group_name)
+        values.append(float(cluster_means_z.loc[cluster_id, available].mean()))
+
+    if not labels:
+        return go.Figure()
+
+    labels_plot = labels + [labels[0]]
+    values_plot = values + [values[0]]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values_plot,
+            theta=labels_plot,
+            fill="toself",
+            line=dict(color=color, width=2),
+            name=f"Cluster {cluster_id}",
+        )
+    )
+    fig.update_layout(
+        polar=dict(radialaxis=dict(showticklabels=False, ticks="")),
+        showlegend=False,
+        template="plotly_white",
+        height=380,
+        margin=dict(l=20, r=20, t=40, b=20),
     )
     return fig
 
@@ -386,14 +490,7 @@ def main() -> None:
     if method == "PAM" and not HAS_KMEDOIDS:
         st.sidebar.warning("PAM requires `scikit-learn-extra`. Install it to enable PAM.")
     n_clusters = st.sidebar.slider("Number of clusters", min_value=2, max_value=10, value=5, step=1)
-    pca_variance = st.sidebar.slider(
-        "PCA variance to keep",
-        min_value=0.50,
-        max_value=0.95,
-        value=0.65,
-        step=0.05,
-        help="Dimensionality reduction before clustering.",
-    )
+    pca_target = 0.65
 
     run = st.sidebar.button("Run clustering", type="primary")
 
@@ -471,6 +568,8 @@ def main() -> None:
         n_show = min(10, len(features_scaled.columns))
         explained = (pca_full.explained_variance_ratio_[:n_show] * 100).tolist()
         cumulative = np.cumsum(explained).tolist()
+        cumulative_ratio = np.cumsum(pca_full.explained_variance_ratio_)
+        pca_components = int(np.where(cumulative_ratio >= pca_target)[0][0] + 1)
 
         fig_pca = make_subplots(specs=[[{"secondary_y": True}]])
         fig_pca.add_trace(go.Bar(x=list(range(1, n_show + 1)), y=explained, name="Explained %"), secondary_y=False)
@@ -483,7 +582,7 @@ def main() -> None:
         fig_pca.update_yaxes(title_text="Explained variance (%)", secondary_y=False)
         fig_pca.update_yaxes(title_text="Cumulative (%)", secondary_y=True)
         st.plotly_chart(fig_pca, use_container_width=True)
-        st.caption(f"PCA target: **{pca_variance:.2f}** variance (set in sidebar).")
+        st.caption(f"PCA target: **{pca_target:.2f}** variance → **{pca_components}** components.")
 
     with tab_results:
         if not run:
@@ -494,12 +593,22 @@ def main() -> None:
             st.error("PAM requires `scikit-learn-extra`. Choose another method or install the dependency.")
             return
 
+        pca_full = PCA(random_state=RANDOM_STATE)
+        pca_full.fit(features_scaled)
+        cumulative_ratio = np.cumsum(pca_full.explained_variance_ratio_)
+        pca_components = int(np.where(cumulative_ratio >= pca_target)[0][0] + 1)
+
         clusters_df, metrics, _, linkage_matrix, features_pca = run_clustering(
             method=method,
             n_clusters=n_clusters,
             features_scaled=features_scaled,
-            pca_variance=pca_variance,
+            pca_components=pca_components,
         )
+
+        cluster_palette = px.colors.qualitative.Set2
+        cluster_color_map = {
+            str(c): cluster_palette[(c - 1) % len(cluster_palette)] for c in sorted(clusters_df["cluster"].unique())
+        }
 
         st.subheader(f"Results: {method} ({n_clusters} clusters)")
         c1, c2, c3, c4 = st.columns(4)
@@ -521,11 +630,32 @@ def main() -> None:
         st.dataframe(clusters_df.sort_values(["cluster", "ticker"]), use_container_width=True, height=420)
 
         st.subheader("Silhouette analysis")
-        st.plotly_chart(_silhouette_barplot(clusters_df, metrics["silhouette"]), use_container_width=True)
+        st.plotly_chart(
+            _silhouette_barplot(clusters_df, metrics["silhouette"], show_labels=True),
+            use_container_width=True,
+        )
         bad = clusters_df[clusters_df["silhouette_width"] < 0]
         if not bad.empty:
             st.warning(f"{len(bad)} stock(s) have negative silhouette scores (potentially misclustered).")
             st.dataframe(bad.sort_values("silhouette_width"), use_container_width=True)
+
+        st.subheader("Cluster profiles (radar)")
+        cluster_means_z = _compute_cluster_profiles(global_data, clusters_df, feature_cols)
+        if cluster_means_z.empty:
+            st.info("No numeric features available for cluster profiling.")
+        else:
+            cols = st.columns(min(2, len(cluster_means_z)))
+            for idx, cluster_id in enumerate(sorted(cluster_means_z.index)):
+                col = cols[idx % len(cols)]
+                with col:
+                    fig = _radar_chart_for_cluster(
+                        cluster_means_z,
+                        int(cluster_id),
+                        cluster_color_map.get(str(cluster_id), "#1f77b4"),
+                    )
+                    if fig.data:
+                        st.plotly_chart(fig, use_container_width=True)
+                    st.caption(f"Cluster {cluster_id} profile (z-scored feature groups)")
 
         st.subheader("PCA visualization (2D)")
         p2 = PCA(n_components=2, random_state=RANDOM_STATE)
@@ -544,13 +674,30 @@ def main() -> None:
             fig3d = px.scatter_3d(z, x=z.columns[0], y=z.columns[1], z=z.columns[2], color="cluster", hover_name="ticker")
             st.plotly_chart(fig3d, use_container_width=True)
 
+        st.subheader("Conclusion / takeaways")
+        largest_cluster = counts.idxmax()
+        smallest_cluster = counts.idxmin()
+        st.markdown(
+            "\n".join(
+                [
+                    f"- **Cluster balance**: largest cluster is **{largest_cluster}** ({counts[largest_cluster]} stocks), "
+                    f"smallest is **{smallest_cluster}** ({counts[smallest_cluster]} stocks).",
+                    f"- **Separation quality**: silhouette score is **{metrics['silhouette']:.2f}** "
+                    f"({'good' if metrics['silhouette'] >= 0.25 else 'weak'} separation).",
+                    f"- **Potential misclusters**: **{len(bad)}** stock(s) have negative silhouette width.",
+                    "- Use the radar charts to interpret each cluster’s dominant traits (risk/return, momentum, "
+                    "volatility, liquidity).",
+                ]
+            )
+        )
+
         st.subheader("Compare methods (same k)")
         with st.expander("Run comparison across KMeans / PAM / Hierarchical", expanded=False):
             rows = []
             for m in ["KMeans", "PAM", "Hierarchical"]:
                 if m == "PAM" and not HAS_KMEDOIDS:
                     continue
-                cdf, mtx, _, _, _ = run_clustering(m, n_clusters, features_scaled, pca_variance)
+                cdf, mtx, _, _, _ = run_clustering(m, n_clusters, features_scaled, pca_components)
                 rows.append(
                     {
                         "method": m,
@@ -572,5 +719,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

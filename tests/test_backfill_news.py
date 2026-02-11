@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app import backfill_news
+from app.backfill import common as backfill_common
 
 
 class DummyConn:
@@ -28,7 +29,8 @@ def test_backfill_news_success(monkeypatch):
         metadata_calls.append((data_type, ticker, start, end, rows, status, error_message))
 
     monkeypatch.setattr(backfill_news, "insert_news_articles", fake_insert)
-    monkeypatch.setattr(backfill_news, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_news.backfill_news_articles(
         client,
@@ -56,7 +58,8 @@ def test_backfill_news_no_results(monkeypatch):
         metadata_calls.append((data_type, ticker, start, end, rows, status, error_message))
 
     monkeypatch.setattr(backfill_news, "insert_news_articles", fail_insert)
-    monkeypatch.setattr(backfill_news, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_news.backfill_news_articles(
         client,
@@ -82,7 +85,8 @@ def test_backfill_news_error(monkeypatch):
     def fake_update(conn, data_type, ticker, start, end, rows, *, status="completed", error_message=None):
         metadata_calls.append((status, error_message))
 
-    monkeypatch.setattr(backfill_news, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_news.backfill_news_articles(
         ErrorClient(),
@@ -94,4 +98,3 @@ def test_backfill_news_error(monkeypatch):
 
     assert result == 0
     assert metadata_calls == [("failed", "boom")]
-

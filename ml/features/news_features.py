@@ -9,6 +9,15 @@ import numpy as np
 import pandas as pd
 
 from .indicator_config import NewsFeatureConfig
+from .feature_registry import (
+    SENTIMENT_SCORE_MEAN,
+    SENTIMENT_SCORE_STD,
+    NEWS_COUNT,
+    SENTIMENT_ROLLING_AVG,
+    SENTIMENT_TREND,
+    SENTIMENT_LLM_MEAN,
+)
+from .llm_sentiment import LLMSentimentConfig, add_llm_sentiment
 
 
 @dataclass(slots=True)
@@ -61,6 +70,15 @@ class NewsFeatureEngineer:
         clean_news = news_df.copy()
         clean_news["published_at"] = pd.to_datetime(clean_news.get("published_at", clean_news.get("date")))
         clean_news["date"] = clean_news["published_at"].dt.normalize()
+        if self.config.enable_llm_sentiment:
+            llm_cfg = LLMSentimentConfig(
+                provider=self.config.llm_provider,
+                text_column=self.config.llm_text_column,
+                use_title=self.config.llm_use_title,
+                combine_title_description=self.config.llm_combine_title_description,
+                batch_size=self.config.llm_batch_size,
+            )
+            clean_news = add_llm_sentiment(clean_news, llm_cfg)
 
         # Aggregate news features
         features = self._aggregate_news_features(clean_news)
@@ -146,8 +164,10 @@ class NewsFeatureEngineer:
         
         # Add Polygon sentiment aggregations if available
         if "sentiment_score" in news_df.columns:
-            aggregations["sentiment_score_mean"] = ("sentiment_score", "mean")
-            aggregations["sentiment_score_std"] = ("sentiment_score", "std")
+            aggregations[SENTIMENT_SCORE_MEAN] = ("sentiment_score", "mean")
+            aggregations[SENTIMENT_SCORE_STD] = ("sentiment_score", "std")
+        if "sentiment_llm_score" in news_df.columns:
+            aggregations[SENTIMENT_LLM_MEAN] = ("sentiment_llm_score", "mean")
         
         if "is_positive" in news_df.columns:
             aggregations["positive_count"] = ("is_positive", "sum")
@@ -157,8 +177,10 @@ class NewsFeatureEngineer:
         features = news_df.groupby(["ticker", "date"]).agg(**aggregations).reset_index()
         
         # Fill NaN std with 0 (happens when only one article per day)
-        if "sentiment_score_std" in features.columns:
-            features["sentiment_score_std"] = features["sentiment_score_std"].fillna(self.config.fill_numeric)
+        if SENTIMENT_SCORE_STD in features.columns:
+            features[SENTIMENT_SCORE_STD] = features[SENTIMENT_SCORE_STD].fillna(self.config.fill_numeric)
+        if SENTIMENT_LLM_MEAN in features.columns:
+            features[SENTIMENT_LLM_MEAN] = features[SENTIMENT_LLM_MEAN].fillna(self.config.fill_numeric)
         
         return features
 
@@ -169,16 +191,16 @@ class NewsFeatureEngineer:
         grouped = features_df.groupby("ticker", group_keys=False)
 
         features_df["news_rolling_count"] = (
-            grouped["news_count"]
+            grouped[NEWS_COUNT]
             .rolling(cfg.lookback_days, min_periods=1)
             .sum()
             .reset_index(level=0, drop=True)
         )
 
         # Rolling sentiment average (from Polygon API)
-        if "sentiment_score_mean" in features_df.columns:
-            features_df["sentiment_rolling_avg"] = (
-                grouped["sentiment_score_mean"]
+        if SENTIMENT_SCORE_MEAN in features_df.columns:
+            features_df[SENTIMENT_ROLLING_AVG] = (
+                grouped[SENTIMENT_SCORE_MEAN]
                 .rolling(cfg.lookback_days, min_periods=1)
                 .mean()
                 .reset_index(level=0, drop=True)
@@ -187,12 +209,12 @@ class NewsFeatureEngineer:
             # Sentiment trend (slope of sentiment over time)
             def _trend(group: pd.DataFrame) -> pd.Series:
                 return (
-                    group["sentiment_score_mean"]
+                    group[SENTIMENT_SCORE_MEAN]
                     .rolling(cfg.lookback_days, min_periods=cfg.trend_min_periods)
                     .apply(self._calculate_trend, raw=False)
                 )
 
-            features_df["sentiment_trend"] = (
+            features_df[SENTIMENT_TREND] = (
                 grouped.apply(_trend)
                 .reset_index(level=0, drop=True)
                 .fillna(cfg.fill_numeric)
@@ -204,7 +226,7 @@ class NewsFeatureEngineer:
         """Fill missing values with defaults."""
         cfg = self.config
         numeric_defaults = {
-            "news_count": cfg.fill_count,
+            NEWS_COUNT: cfg.fill_count,
             "news_rolling_count": cfg.fill_count,
             "avg_title_length": cfg.fill_numeric,
             "avg_description_length": cfg.fill_numeric,
@@ -213,13 +235,14 @@ class NewsFeatureEngineer:
             "total_keywords": cfg.fill_count,
             "total_related_tickers": cfg.fill_count,
             # Polygon sentiment features
-            "sentiment_score_mean": cfg.fill_numeric,
-            "sentiment_score_std": cfg.fill_numeric,
+            SENTIMENT_SCORE_MEAN: cfg.fill_numeric,
+            SENTIMENT_SCORE_STD: cfg.fill_numeric,
+            SENTIMENT_LLM_MEAN: cfg.fill_numeric,
             "positive_count": cfg.fill_count,
             "negative_count": cfg.fill_count,
             "neutral_count": cfg.fill_count,
-            "sentiment_rolling_avg": cfg.fill_numeric,
-            "sentiment_trend": cfg.fill_numeric,
+            SENTIMENT_ROLLING_AVG: cfg.fill_numeric,
+            SENTIMENT_TREND: cfg.fill_numeric,
         }
         for column, value in numeric_defaults.items():
             if column not in df.columns:

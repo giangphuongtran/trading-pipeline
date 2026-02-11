@@ -146,8 +146,8 @@ This document describes the exported feature dataset columns, including their ca
 | `sentiment_rolling_avg` | float64 | 7-day rolling sentiment | `sentiment_mean.rolling(7).mean()` | Smoothed sentiment trend |
 | `news_rolling_count` | int64 | 7-day rolling news count | `sentiment_count.rolling(7).sum()` | Smoothed news volume |
 | `sentiment_trend` | float64 | Sentiment trend slope | Linear regression slope of 7-day sentiment | Sentiment direction |
-| `sentiment_llm_mean` | float64 | LLM-based sentiment mean | `mean(sentiment_llm_score)` per day | LLM sentiment (if enabled) |
-| `sentiment_rule_mean` | float64 | Rule-based sentiment mean | `mean(sentiment_rule_score)` per day | Rule-based sentiment |
+| `sentiment_llm_mean` | float64 | LLM-based sentiment mean | `mean(sentiment_llm_score)` per day | LLM sentiment (FinBERT enabled by default) |
+| `sentiment_rule_mean` | float64 | Rule-based sentiment mean | `mean(sentiment_rule_score)` per day | Rule-based sentiment (not yet wired) |
 | `news_article_count` | int64 | Total articles per ticker | `count(articles)` per ticker | Aggregate news volume |
 
 ---
@@ -189,5 +189,3 @@ This document describes the exported feature dataset columns, including their ca
 3. **Time-Series Considerations**
    - Features are computed per-ticker and should be validated for leakage (no future data).
    - Use time-based splits / walk-forward validation for supervised models.
-
-

@@ -36,9 +36,8 @@ POSTGRES_PORT_LOCAL = os.getenv("POSTGRES_PORT_HOST")
 
 POSTGRES_PORT_DOCKER = os.getenv("POSTGRES_PORT")
 
-# Optional full URLs (preferred if set)
-DATABASE_URL_HOST   = os.getenv("DATABASE_URL_HOST")   # e.g. postgresql://user:pass@localhost:5440/trading_data
-DATABASE_URL_DOCKER = os.getenv("DATABASE_URL_DOCKER") # e.g. postgresql://airflow:supersecret@postgres:5432/trading_data
+DATABASE_URL_HOST   = os.getenv("DATABASE_URL_HOST")
+DATABASE_URL_DOCKER = os.getenv("DATABASE_URL_DOCKER")
 
 # Pipeline feature flags
 ENABLE_DATA_QUALITY_CHECKS = _env_bool("ENABLE_DATA_QUALITY_CHECKS", default=False)
@@ -55,12 +54,6 @@ def build_database_url(
     
     Precedence: 1) overrides['url'], 2) DATABASE_URL_DOCKER/HOST env vars, 3) compose from POSTGRES_* vars.
     
-    Why use_docker? When running inside Docker, the database hostname is "postgres" (Docker service name).
-    When running locally, it's "localhost". This flag switches between network contexts.
-    
-    What are overrides? Custom values that replace defaults. Useful for testing or special cases.
-    Example: build_database_url(use_docker=True, overrides={"host": "custom-host"})
-    
     Args:
         use_docker: If True, use Docker network hostname "postgres" (default: False, uses "localhost")
         overrides: Optional dict to override specific parts:
@@ -72,17 +65,14 @@ def build_database_url(
     """
     overrides = overrides or {}
 
-    # 1) Explicit override URL
     if overrides.get("url"):
         return overrides["url"]
 
-    # 2) Full URLs from env (.env you provided sets both)
     if use_docker and DATABASE_URL_DOCKER:
         return DATABASE_URL_DOCKER
     if not use_docker and DATABASE_URL_HOST:
         return DATABASE_URL_HOST
 
-    # 3) Compose a URL from parts
     user     = overrides.get("user", POSTGRES_USER)
     password = overrides.get("password", POSTGRES_PASSWORD)
     database = overrides.get("database", POSTGRES_DB)
@@ -109,7 +99,6 @@ def connect_db(*, use_docker: bool = False, overrides: Optional[dict] = None):
         psycopg2 connection object
     """
     url = build_database_url(use_docker=use_docker, overrides=overrides)
-    # Optional: print masked URL for debugging
     try:
         if "@" in url and ":" in url.split("@")[0]:
             userinfo, rest = url.split("@", 1)
@@ -125,10 +114,6 @@ def connect_db(*, use_docker: bool = False, overrides: Optional[dict] = None):
     except Exception:
         pass
     return psycopg2.connect(url)
-
-# ---------------------------------------------------------------------------
-# Insert helpers (unchanged)
-# ---------------------------------------------------------------------------
 
 def _execute_with_transaction(
     conn: psycopg2.extensions.connection,

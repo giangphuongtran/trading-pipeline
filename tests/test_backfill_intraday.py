@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app import backfill_intraday
+from app.backfill import common as backfill_common
 
 
 class DummyConn:
@@ -21,7 +22,8 @@ def test_backfill_intraday_success(monkeypatch):
         metadata_calls.append((data_type, ticker, start, end, rows, status, error_message))
 
     monkeypatch.setattr(backfill_intraday, "insert_intraday_bars", fake_insert)
-    monkeypatch.setattr(backfill_intraday, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_intraday.backfill_intraday_bars(
         client,
@@ -49,7 +51,8 @@ def test_backfill_intraday_no_results(monkeypatch):
         metadata_calls.append((data_type, ticker, start, end, rows, status, error_message))
 
     monkeypatch.setattr(backfill_intraday, "insert_intraday_bars", fail_insert)
-    monkeypatch.setattr(backfill_intraday, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_intraday.backfill_intraday_bars(
         client,
@@ -75,7 +78,8 @@ def test_backfill_intraday_error(monkeypatch):
     def fake_update(conn, data_type, ticker, start, end, rows, *, status="completed", error_message=None):
         metadata_calls.append((status, error_message))
 
-    monkeypatch.setattr(backfill_intraday, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_intraday.backfill_intraday_bars(
         ErrorClient(),
@@ -87,4 +91,3 @@ def test_backfill_intraday_error(monkeypatch):
 
     assert result == 0
     assert metadata_calls == [("failed", "boom")]
-

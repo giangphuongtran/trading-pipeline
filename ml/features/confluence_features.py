@@ -22,6 +22,7 @@ from .indicator_config import (
     NewsFeatureConfig,
     ConfluenceConfig,
 )
+from .feature_registry import SENTIMENT_SCORE_MEAN, SENTIMENT_TREND
 
 
 @dataclass
@@ -204,10 +205,26 @@ class ConfluenceFeatureEngineer:
             | ((self._get_column_or_default(data, "rsi_14", 0) > cfg.rsi_overbought) & (self._get_column_or_default(data, "price_change", 0) < 0))
         ).astype(int)
 
-        data["momentum_macd_cross"] = (
-            (self._get_column_or_default(data, "macd", 0) > self._get_column_or_default(data, "macd_signal", 0))
-            & (self._get_column_or_default(data, "macd_histogram", 0) > 0)
-        ).astype(int)
+        macd_col = next(
+            (
+                col
+                for col in data.columns
+                if col.startswith("macd_")
+                and not col.startswith("macd_signal_")
+                and not col.startswith("macd_hist_")
+            ),
+            None,
+        )
+        macd_signal_col = next((col for col in data.columns if col.startswith("macd_signal_")), None)
+        macd_hist_col = next((col for col in data.columns if col.startswith("macd_hist_")), None)
+
+        if macd_col and macd_signal_col and macd_hist_col:
+            data["momentum_macd_cross"] = (
+                (self._get_column_or_default(data, macd_col, 0) > self._get_column_or_default(data, macd_signal_col, 0))
+                & (self._get_column_or_default(data, macd_hist_col, 0) > 0)
+            ).astype(int)
+        else:
+            data["momentum_macd_cross"] = 0
 
         # Trend context
         data["trend_price_above_sma20"] = (self._get_column_or_default(data, "close_vs_sma20", 0) > 0).astype(int)
@@ -244,8 +261,11 @@ class ConfluenceFeatureEngineer:
         ).astype(int)
 
         # News alignment
-        data["news_sentiment_positive"] = (self._get_column_or_default(data, "sentiment_mean", 0) > 0).astype(int)
-        data["news_sentiment_trending_up"] = (self._get_column_or_default(data, "sentiment_trend", 0) > 0).astype(int)
+        sentiment_mean_col = SENTIMENT_SCORE_MEAN if SENTIMENT_SCORE_MEAN in data.columns else "sentiment_mean"
+        data["news_sentiment_positive"] = (self._get_column_or_default(data, sentiment_mean_col, 0) > 0).astype(int)
+        data["news_sentiment_trending_up"] = (
+            self._get_column_or_default(data, SENTIMENT_TREND, 0) > 0
+        ).astype(int)
 
         # Pattern strength
         pattern_strength = (
@@ -280,4 +300,3 @@ class ConfluenceFeatureEngineer:
 
         data.replace([np.inf, -np.inf], np.nan, inplace=True)
         return data
-

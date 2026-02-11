@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app import backfill_daily
+from app.backfill import common as backfill_common
 
 
 class DummyConn:
@@ -33,7 +34,8 @@ def test_backfill_daily_success(monkeypatch):
         )
 
     monkeypatch.setattr(backfill_daily, "insert_daily_bars", fake_insert)
-    monkeypatch.setattr(backfill_daily, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_daily.backfill_daily_bars(client, DummyConn(), "AAPL", "2024-01-01", "2024-01-02")
 
@@ -64,7 +66,8 @@ def test_backfill_daily_no_results(monkeypatch):
         metadata_calls.append((data_type, ticker, start, end, rows, status, error_message))
 
     monkeypatch.setattr(backfill_daily, "insert_daily_bars", fail_insert)
-    monkeypatch.setattr(backfill_daily, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_daily.backfill_daily_bars(client, DummyConn(), "AAPL", "2024-01-01", "2024-01-02")
 
@@ -82,10 +85,10 @@ def test_backfill_daily_error(monkeypatch):
     def fake_update(conn, data_type, ticker, start, end, rows, *, status="completed", error_message=None):
         metadata_calls.append((status, error_message))
 
-    monkeypatch.setattr(backfill_daily, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "update_metadata", fake_update)
+    monkeypatch.setattr(backfill_common, "check_data_freshness", lambda *args, **kwargs: True)
 
     result = backfill_daily.backfill_daily_bars(ErrorClient(), DummyConn(), "AAPL", "2024-01-01", "2024-01-02")
 
     assert result == 0
     assert metadata_calls == [("failed", "boom")]
-

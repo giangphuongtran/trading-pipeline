@@ -7,7 +7,8 @@ This is the canonical implementation module used by Airflow and local runs:
 from __future__ import annotations
 
 from app.backfill.cli import compute_backfill_plan, parse_args
-from app.config import connect_db, insert_news_articles, update_metadata
+from app.backfill.common import run_backfill
+from app.config import connect_db, insert_news_articles
 from app.observability.logging import get_logger
 from app.polygon_trading_client import PolygonTradingClient
 from app.quality.validate import maybe_validate_news_articles
@@ -36,36 +37,25 @@ def backfill_news_articles(
     Returns:
         Number of rows inserted
     """
-    logger.info("Processing %s from %s to %s", ticker, start_date, end_date)
-
-    try:
-        articles = client.get_news(
-            ticker=ticker,
-            published_utc_gte=start_date,
-            published_utc_lte=end_date,
+    def _fetch_news(ticker_value: str, start: str, end: str) -> list[dict]:
+        return client.get_news(
+            ticker=ticker_value,
+            published_utc_gte=start,
+            published_utc_lte=end,
         )
-        if articles:
-            maybe_validate_news_articles(articles)
-            rows_inserted = insert_news_articles(conn, articles)
-            update_metadata(conn, "news", ticker, start_date, end_date, rows_inserted)
-            return rows_inserted
 
-        logger.info("No news found for %s from %s to %s", ticker, start_date, end_date)
-        update_metadata(conn, "news", ticker, start_date, end_date, 0, status="completed")
-        return 0
-    except Exception as exc:
-        logger.exception("Error processing %s from %s to %s", ticker, start_date, end_date)
-        update_metadata(
-            conn,
-            "news",
-            ticker,
-            start_date,
-            end_date,
-            0,
-            status="failed",
-            error_message=str(exc),
-        )
-        return 0
+    return run_backfill(
+        client=client,
+        conn=conn,
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        data_type="news",
+        fetch_fn=_fetch_news,
+        insert_fn=insert_news_articles,
+        validate_fn=maybe_validate_news_articles,
+        logger=logger,
+    )
 
 
 def main() -> None:
@@ -101,5 +91,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
