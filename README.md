@@ -8,7 +8,7 @@ Batch-first trading data pipeline that ingests market data (OHLCV + news sentime
 - Backfill jobs fetch from Polygon.io, optionally run Pandera quality checks, then UPSERT into Postgres tables.
 - Ingestion run metadata and failure status are recorded in `api_metadata` for observability and resume support.
 - Feature engineering and model prep run from `ml/` using the ingested market + news data.
-- Detailed architecture and flow diagrams: [Pipeline Diagram](./docs/pipelineOverview.png)
+- Detailed architecture and flow diagrams: ![Pipeline Diagram](./docs/pipelineOverview.png)
 
 ## What this project does
 
