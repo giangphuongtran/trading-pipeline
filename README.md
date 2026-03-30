@@ -1,86 +1,77 @@
-# Trading Pipeline
+# 📈 End-to-End Trading Data & Machine Learning Pipeline
 
-Batch-first trading data pipeline that ingests market data (OHLCV + news sentiment) from Polygon.io, stores it in Postgres, and produces ML-ready features for research + modeling. Orchestrated with Airflow and runnable locally with Docker Compose.
+**Author:** Giang Tran
 
-## Pipeline Overview
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://python-sql.streamlit.app/)
 
-- Airflow schedules `app.backfill_daily`, `app.backfill_intraday`, and `app.backfill_news`.
-- Backfill jobs fetch from Polygon.io, optionally run Pandera quality checks, then UPSERT into Postgres tables.
-- Ingestion run metadata and failure status are recorded in `api_metadata` for observability and resume support.
-- Feature engineering and model prep run from `ml/` using the ingested market + news data.
-- Detailed architecture and flow diagrams: ![Pipeline Diagram](./docs/pipelineOverview.png)
+A production-grade, batch-first data pipeline designed to ingest, normalize, and transform high-frequency market data into mathematically rigorous, ML-ready features for quantitative trading research.
 
-## What this project does
+**Business Objective:** This project bridges the gap between raw data and actionable statistical models. By automatically handling API ingestion, quality gates, and data storage, it provides quantitative analysts and portfolio managers with a clean, highly reliable feature store to identify hidden market behaviors and clustering correlations.
 
-- **Ingests**: daily bars, intraday (5-min) bars, and news from Polygon.io
-- **Stores**: normalized raw tables in Postgres (`daily_bars`, `intraday_bars`, `news_articles`) + ingestion metadata (`api_metadata`)
-- **Orchestrates**: Airflow DAGs schedule the batch ingestion
-- **Builds features**: feature engineering code under `ml/` for modeling workflows
-- **Includes Model 1**: unsupervised clustering + Streamlit visualization (`streamlit/clustering_app.py`)
+![Pipeline Architecture](./docs/pipelineOverview.png)
 
-## What this pipeline has
+## 🏗️ System Architecture (Medallion Concept)
 
-- **Orchestration**: Airflow DAGs in `airflow/dags/`
-- **Storage**: Postgres via Docker Compose (`docker-compose.yml`, `db/*.sql`)
-- **Batch ingestion**: Backfill CLIs (daily/intraday/news) + metadata tracking (`api_metadata`)
-- **Quality gates (optional)**: Pandera-based schema + invariant checks (toggle with `ENABLE_DATA_QUALITY_CHECKS=1`)
-- **Observability (baseline)**: Structured logging option (`LOG_FORMAT=json`) + failure status recorded in `api_metadata`
-- **Reproducibility**: `Makefile`, `project_setup.sh`, `env.example`
-- **Tests**: Unit tests for backfill + CLI planning (`tests/`)
-- **CI**: GitHub Actions workflow at `.github/workflows/ci.yml` (ruff + pytest)
+This pipeline implements a modified Medallion architecture orchestrated by **Apache Airflow**, entirely containerized via **Docker**.
 
-## Quick Start
+- **Bronze (Ingestion):** Raw daily/intraday OHLCV bars and news sentiment JSONs fetched directly from the Polygon.io API.
+- **Silver (Normalization):** Cleansed and standardized tables stored in **PostgreSQL** (`daily_bars`, `intraday_bars`, `news_articles`). Includes automated metadata tracking (`api_metadata`) for run observability.
+- **Gold (Feature Engineering & ML):** Mathematically transformed feature sets generated in `ml/` (e.g., rolling volatility, momentum indicators) used directly for unsupervised clustering models and visualization via **Streamlit**.
 
-### Prerequisites
-- Python 3.9+
-- Docker and Docker Compose
-- PostgreSQL database
-- Polygon.io API key
+### Data Complexity Showcase
+*Handling complex, nested API structures into structured relational tables.*
+```json
+// Example: Raw Polygon.io Ingestion payload handled by the pipeline
+{
+  "ticker": "AAPL",
+  "queryCount": 1,
+  "results": [
+    {
+      "v": 52693892,
+      "vw": 174.56,
+      "o": 173.9,
+      "c": 175.1,
+      "h": 175.42,
+      "l": 173.12,
+      "t": 1698667200000,
+      "n": 567891
+    }
+  ]
+}
+```
 
-### Setup
+## 🚀 Core Capabilities
+1. Data Engineering & Orchestration
+Automated Batching: Airflow DAGs (airflow/dags/) schedule backfill_daily, backfill_intraday, and backfill_news.
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd trading-pipeline
-   ```
+Fault Tolerance: Ingestion state and failure statuses are recorded in api_metadata for seamless resume support.
 
-2. **Configure environment**
-   - Copy `env.example` to `.env`
-   - Set at least `POLYGON_API_KEY=...` (required)
-   - Optional:
-     - Set `ENABLE_DATA_QUALITY_CHECKS=1` to fail fast on bad data
-     - Set `LOG_FORMAT=json` for structured logs
+Optional Quality Gates: Toggleable Pandera-based schema and invariant checks (ENABLE_DATA_QUALITY_CHECKS=1) to fail fast on corrupted data.
 
-3. **Run setup script**
-   ```bash
-   ./project_setup.sh
-   ```
+2. Statistical Modeling & Analytics
+Feature Store Creation: Dedicated ml/scripts generate advanced statistical features required for financial modeling.
 
-4. **Start services** (if not already started)
-   ```bash
-   docker compose up -d
-   ```
+Unsupervised Learning: Includes a clustering model (Model 1) to group assets by actual risk-return behaviors rather than traditional sector labels.
 
-5. **Verify installation**
-   ```bash
-   # Test database connection (host context)
-   python -c "from app.config import connect_db; conn = connect_db(use_docker=False); conn.close(); print('✅ DB connected')"
-   ```
+Interactive Dashboards: Live Streamlit app (streamlit/clustering_app.py) for visual data exploration.
 
-## One-minute demo (interview-friendly)
+## ⚡ Quick Start
+Prerequisites
+Python 3.9+ | Docker & Docker Compose | PostgreSQL | Polygon.io API key
+
+## One-Minute Demo (Local Infrastructure)
 
 ```bash
-# 1) Start services
+# 1) Start Postgres and Airflow services
 make up
 
-# 2) Follow Airflow logs
+# 2) Follow Airflow execution logs
 make logs
 
-# 3) (Optional) run a backfill locally (host DB URL)
+# 3) Trigger a local backfill
 make backfill-daily
 
-# 4) Run Model 1 clustering dashboard
+# 4) Launch the ML clustering dashboard
 streamlit run streamlit/clustering_app.py
 ```
 
@@ -116,23 +107,22 @@ trading-pipeline/
 
 ### Essential Reading
 - **[Architecture](./docs/ARCHITECTURE.md)**: System design, data flow, and production-ready decisions
-- **[Runbook](./docs/RUNBOOK.md)**: How to run, operate, and troubleshoot the pipeline
-- **[Pipeline Diagram](./docs/PIPELINE_DIAGRAM.md)**: Detailed architecture + DAG + data model diagrams (Mermaid)
-- **[Feature Catalog](./docs/FEATURES.md)**: Feature definitions and modeling notes
-- **[ML / Modeling](./docs/ML.md)**: Current model status + how to reproduce clustering
-- **[API Examples](./misc/API_EXAMPLE.md)**: Polygon.io API usage examples
+- **[Pipeline Diagram](./docs/PIPELINE_DIAGRAM.md)**: Detailed DAG and data model diagrams (Mermaid)
+- **[Feature Catalog](./docs/FEATURES.md)**: Feature definitions, statistical metrics, and modeling notes
+- **[ML / Modeling](./docs/ML.md)**: Current model status and clustering methodology
+- **[Runbook](./docs/RUNBOOK.md)**: Ops, troubleshooting, and manual backfills
 
 ### Project Planning
 - **[Project Thinking](./PROJECT_THINKING.md)**: Early design notes (optional reading)
 
 ## Usage Examples
 
-### Feature Engineering Pipeline
+### Generating Statistical Features
 
 ```python
 from ml.scripts.prepare_features import prepare_daily_features
 
-# Generate daily features
+# Generate rolling daily features for quantitative analysis
 features = prepare_daily_features(
     ticker="AAPL",
     save_path="data/daily_features.parquet"
@@ -243,3 +233,5 @@ For issues and questions:
 - Start with the [Runbook](./docs/RUNBOOK.md) (common failure modes + fixes)
 - Review [Architecture](./docs/ARCHITECTURE.md) for system context
 - Open an issue on GitHub
+
+Looking for the mathematical deep-dive on how these features are used? Check out my [Stock Clustering & Risk Intelligence Engine ([python-sql repo](https://github.com/giangphuongtran/python-sql)) which applies PCA and K-Means to this data.
